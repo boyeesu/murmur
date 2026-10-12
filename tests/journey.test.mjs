@@ -1,0 +1,67 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { temporary, repository, git } from './helpers.mjs';
+import { startDaemon } from '../packages/murmur/dist/daemon/server.js';
+import { request } from '../packages/murmur/dist/cli/client.js';
+
+const execute = promisify(execFile);
+const cli = fileURLToPath(new URL('../packages/murmur/dist/cli/index.js', import.meta.url));
+
+test('HTTP and CLI complete a committed task through a tested integration candidate', async t => {
+  const root = await temporary(t);
+  const home = path.join(root, 'state');
+  const repo = await repository(path.join(root, 'source'));
+  const originalHead = git(repo, 'rev-parse', 'HEAD');
+  const daemon = await startDaemon(home);
+  const post = (endpoint, body, options) => request(home, 'POST', endpoint, body, options);
+  try {
+    const project = await post('/v1/projects', { root: repo });
+    const actor = await post('/v1/sessions', { projectId: project.id, workspaceRoot: repo, tool: 'manual', nativeId: 'journey', instanceId: 'one' });
+    let task = await post('/v1/tasks', { projectId: project.id, sessionId: actor.session.id, title: 'Implement a reviewed feature', featureKey: 'journey-feature' });
+    const workspace = await post('/v1/workspaces/create', { projectId: project.id });
+    const attached = await post('/v1/workspaces/attach', { taskId: task.id, workspaceId: workspace.id, revision: task.revision });
+    task = attached.task;
+    assert(attached.restartRequired);
+    const declared = await post('/v1/intents', { taskId: task.id, revision: task.revision, writes: ['feature.txt'], produces: [{ key: 'feature-contract', version: 'v1' }] }, { token: actor.token });
+    task = declared.task;
+    await writeFile(path.join(workspace.root, 'feature.txt'), 'Reviewed source in its own workspace.\n');
+    const overlapping = await post('/v1/workspaces/create', { projectId: project.id });
+    await writeFile(path.join(overlapping.root, 'feature.txt'), 'Independent uncommitted fixture work.\n');
+    await post('/v1/workspaces/reconcile', { projectId: project.id });
+    const observed = await request(home, 'GET', `/v1/workspaces?projectId=${project.id}`);
+    assert.equal(observed.find(row => row.id === workspace.id).observedState, 'dirty');
+    assert.equal(observed.find(row => row.id === workspace.id).observation.actor, 'unknown');
+    assert((await request(home, 'GET', `/v1/alerts?projectId=${project.id}`)).some(alert => alert.kind === 'observed_workspace_overlap'));
+    git(workspace.root, 'add', 'feature.txt');
+    git(workspace.root, 'commit', '-qm', 'Implement disposable journey fixture\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>');
+    await post('/v1/workspaces/reconcile', { projectId: project.id });
+    assert(!(await request(home, 'GET', `/v1/alerts?projectId=${project.id}`)).some(alert => alert.kind === 'observed_workspace_overlap'));
+    const submission = await post('/v1/submissions', { taskId: task.id, revision: task.revision }, { token: actor.token });
+    const candidate = await post('/v1/integration/prepare', { changesetId: submission.id });
+    assert.equal(candidate.validation.status, 'unverified');
+    await post('/v1/validation/config', { projectId: project.id, revision: 0, commands: [{ command: process.execPath, args: ['-e', 'process.exit(require("node:fs").existsSync("feature.txt") ? 0 : 1)'], timeoutMs: 5000 }] });
+    const validated = await post('/v1/integration/validate', { jobId: candidate.id });
+    assert.equal(validated.validation.status, 'passed');
+    await assert.rejects(post('/v1/integration/approve', { jobId: candidate.id, candidateSha: candidate.candidateSha, targetSha: candidate.targetSha }, { token: actor.token }), error => error.status === 403);
+    const promoted = await post('/v1/integration/approve', { jobId: candidate.id, candidateSha: candidate.candidateSha, targetSha: candidate.targetSha });
+    assert.equal(promoted.status, 'promoted');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), originalHead);
+    assert.equal(git(repo, 'rev-parse', promoted.targetRef), candidate.candidateSha);
+    assert.equal(git(repo, 'status', '--porcelain'), '');
+    const status = await request(home, 'GET', `/v1/status?projectId=${project.id}`);
+    assert.equal(status.tasks[0].status, 'integrated');
+    const env = { ...process.env, MURMUR_HOME: home };
+    const queue = await execute(process.execPath, [cli, 'queue', '--project', project.id], { env, timeout: 10000 });
+    assert.equal(JSON.parse(queue.stdout)[0].id, candidate.id);
+    const detail = await execute(process.execPath, [cli, 'integration', 'inspect', '--job', candidate.id], { env, timeout: 10000 });
+    assert.equal(JSON.parse(detail.stdout).job.status, 'promoted');
+    const dashboard = await execute(process.execPath, [cli, 'dashboard'], { env, timeout: 10000 });
+    assert(JSON.parse(dashboard.stdout).url.includes('/ui/#bootstrap='));
+    await assert.rejects(execute(process.execPath, [cli, 'integration', 'approve', '--job', candidate.id, '--candidate', candidate.candidateSha, '--target', candidate.targetSha], { env, timeout: 10000 }), error => error.stderr.includes('--confirm'));
+  } finally { await daemon.close(); }
+});

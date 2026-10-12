@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose an improvement to coordination, integrations, or usability.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What are you trying to do, and where does the current workflow fall short?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the outcome rather than assuming a particular implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How would we verify it?
+      description: Include affected tools/platforms and what success would look like.
+  - type: markdown
+    attributes:
+      value: Please do not include credentials or private project content. Check the release checklist for already-planned work.

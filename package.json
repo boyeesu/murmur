@@ -1,0 +1,29 @@
+{
+  "name": "murmur-workspace",
+  "private": true,
+  "description": "Local-first coordination for parallel coding agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boyeesu/murmur.git"
+  },
+  "homepage": "https://github.com/boyeesu/murmur#readme",
+  "bugs": {
+    "url": "https://github.com/boyeesu/murmur/issues"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/murmur",
+    "apps/dashboard"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm run build && node --test tests/*.test.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "murmur": "node packages/murmur/dist/cli/index.js"
+  }
+}

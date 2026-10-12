@@ -1,0 +1,30 @@
+{
+  "name": "murmur-local",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Local task coordination, decision awareness, and safe Git integration",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boyeesu/murmur.git",
+    "directory": "packages/murmur"
+  },
+  "homepage": "https://github.com/boyeesu/murmur#readme",
+  "bugs": {
+    "url": "https://github.com/boyeesu/murmur/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "murmur": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build.mjs"
+  }
+}

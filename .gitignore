@@ -1,0 +1,26 @@
+node_modules/
+**/dist/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.murmur/
+.claude/.cc-writes/
+packages/murmur/LICENSE
+packages/murmur/README.md
+packages/murmur/docs/
+# Machine-local agent configuration and internal planning notes
+.claude/
+docs/implementation-plan.md
+
+# Local coordination state must never enter public Git
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+daemon.json
+daemon-*.json
+*.tgz
+.cache/

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="referrer" content="no-referrer">
+  <title>Murmur · Tasks</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <aside class="sidebar" id="sidebar" aria-label="Murmur navigation">
+    <a class="brand" href="/ui/" aria-label="Murmur dashboard" id="brand-link">
+      <svg class="flock" width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m3 13 5 3 5-3M13 7l5 3 5-3M17 21l5 3 5-3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Murmur</span>
+    </a>
+    <p class="sidebar-caption">Coordination workspace</p>
+    <nav class="navigation" aria-label="Workspace views">
+      <button type="button" class="nav-item active" data-page="tasks" aria-current="page"><span class="nav-icon" aria-hidden="true">☷</span><span>Tasks</span><span class="nav-count" data-count="tasks"></span></button>
+      <button type="button" class="nav-item" data-page="alerts"><span class="nav-icon" aria-hidden="true">△</span><span>Alerts</span><span class="nav-count" data-count="alerts"></span></button>
+      <button type="button" class="nav-item" data-page="decisions"><span class="nav-icon" aria-hidden="true">◇</span><span>Decisions</span><span class="nav-count" data-count="decisions"></span></button>
+      <button type="button" class="nav-item" data-page="workspaces"><span class="nav-icon" aria-hidden="true">▱</span><span>Workspaces</span><span class="nav-count" data-count="workspaces"></span></button>
+      <button type="button" class="nav-item" data-page="integration"><span class="nav-icon" aria-hidden="true">⇄</span><span>Integration</span><span class="nav-count" data-count="integration"></span></button>
+      <button type="button" class="nav-item" data-page="adapters"><span class="nav-icon" aria-hidden="true">⌘</span><span>Adapters</span><span class="nav-count" data-count="adapters"></span></button>
+    </nav>
+    <div class="sidebar-footer"><span class="local-mark" aria-hidden="true"></span><span>Local to this machine</span><p>Shared context.<br>Independent agents.</p></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar">
+      <button type="button" class="icon-button mobile-menu" id="menu-toggle" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">☰</button>
+      <div class="project-control"><label for="project-select">Project</label><select id="project-select" disabled><option value="">Sign in to select a project</option></select></div>
+      <button type="button" class="button button-quiet register-button" id="register-project" disabled><span aria-hidden="true">＋</span> Register project</button>
+      <div class="connection-group"><span id="connection-status" class="connection" role="status"><span class="status-mark neutral" aria-hidden="true">○</span><span>Not connected</span></span><button type="button" class="icon-button" id="refresh" title="Refresh workspace" aria-label="Refresh workspace" disabled>↻</button></div>
+    </header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><h1 id="page-title">Tasks</h1><p id="page-description">Keep ownership clear. See what is ready to move.</p></div><div id="page-actions" class="action-row"></div></div>
+      <div id="page-error" class="notice notice-error" role="alert" hidden></div>
+      <div id="page-content"><section class="empty-state"><span class="empty-symbol" aria-hidden="true">↗</span><h2>Connect to your local workspace</h2><p>Checking the dashboard session…</p></section></div>
+      <footer class="workspace-footer"><span>Local daemon · Browser session stays in memory</span><span id="updated-at"></span></footer>
+    </main>
+  </div>
+  <dialog id="drawer" class="drawer" aria-labelledby="drawer-title"><div id="drawer-content"></div></dialog>
+  <dialog id="modal" class="modal" aria-labelledby="modal-title"><div id="modal-content"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript><div class="no-script">Murmur needs JavaScript to connect to the local daemon. Enable it, then reopen a fresh URL from <code>npm run murmur -- dashboard</code>.</div></noscript>
+</body>
+</html>

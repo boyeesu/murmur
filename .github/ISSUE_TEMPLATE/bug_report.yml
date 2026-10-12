@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible problem in a documented Murmur capability.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the user guide and capability matrix first. MCP/native hooks and some tool integrations remain incomplete.
+        Do not post security vulnerabilities, credentials, state databases, or raw conversations here. Read SECURITY.md for private reporting guidance.
+  - type: input
+    id: version
+    attributes:
+      label: Murmur version or commit
+      placeholder: "0.2.0 or a commit SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node/Git versions, and relevant coding-tool version. Do not paste environment-variable dumps.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Prefer a disposable repository or minimal fixture.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Never include tokens, daemon.json, database files, private source, or recorded conversations.
+      render: text
