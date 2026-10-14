@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readFile, rename, access } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rename, access, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CoordinationStore } from '../packages/murmur/dist/storage/store.js';
 import { discoverProject } from '../packages/murmur/dist/workspaces/identity.js';
 import { GitWorkflow } from '../packages/murmur/dist/integration/workflow.js';
+import { MaintenanceService, restoreBackup } from '../packages/murmur/dist/core/maintenance.js';
 import { temporary, repository, git, mutation } from './helpers.mjs';
 
 const human = { kind: 'human' };
@@ -316,6 +317,42 @@ test('promotion interruption reconciles the DB half once without retrying Git or
   assert.equal(f.store.events(f.project.id, 0).filter(event => event.type === 'integration.promoted').length, 1);
 });
 
+for (const responseMissing of [false, true]) test(`restore permanently retires promoted workflow requests across initialization (cached response missing: ${responseMissing})`, async t => {
+  const f = await fixture(t), { job } = await prepared(f), input = approval(job, { acknowledgeNoChecks: true }), key = randomUUID();
+  await f.call('approve', input, human, key);
+  const meta = mutation('workflow.approve', input, key);
+  if (responseMissing) {
+    // A valid crash snapshot after finishPromotion, before the final response transaction.
+    f.store.db.prepare('DELETE FROM mutations WHERE caller=? AND key=?').run('human', key);
+    f.store.db.prepare("UPDATE workflow_requests SET status='running',response=NULL WHERE caller=? AND key=?").run('human', key);
+  }
+  const directory = await realpath(f.directory), destination = path.join(directory, 'backup.sqlite'), target = path.join(directory, 'restored');
+  await new MaintenanceService(f.store).backup({ destination }, human);
+  await restoreBackup({ backupPath: destination, stateDirectory: target }, human);
+  const store = new CoordinationStore(path.join(target, 'state.sqlite')); t.after(() => store.close());
+  const restored = new GitWorkflow(store, target); t.after(() => restored.close());
+  const journal = () => store.db.prepare('SELECT * FROM workflow_requests WHERE caller=? AND key=?').get('human', key);
+  assert.equal(journal().status, 'retired'); assert.equal(journal().response, null);
+  await assert.rejects(restored.approve(input, human, meta), errorCode('IDEMPOTENCY_RETIRED'));
+  await restored.initialize();
+  assert.equal(restored.getJob(job.id).status, 'promoted', 'historical promoted bookkeeping remains inspectable');
+  assert.equal(restored.getJob(job.id).validation.status, 'invalidated');
+  assert.equal(journal().status, 'retired'); assert.equal(journal().response, null);
+  await assert.rejects(restored.approve(input, human, meta), errorCode('IDEMPOTENCY_RETIRED'));
+  assert.equal(store.events(f.project.id, 0).filter(event => event.type === 'integration.promoted').length, 1);
+  assert.equal(git(f.root, 'rev-parse', job.targetRef), job.candidateSha);
+  if (!responseMissing) {
+    assert.throws(() => store.replay(meta), errorCode('IDEMPOTENCY_RETIRED'));
+    // A legacy/independently recovered journal cannot supersede permanent store retirement.
+    store.db.prepare("UPDATE workflow_requests SET status='complete',response=? WHERE caller=? AND key=?").run(JSON.stringify(restored.getJob(job.id)), 'human', key);
+    await assert.rejects(restored.approve(input, human, meta), errorCode('IDEMPOTENCY_RETIRED'));
+    store.db.prepare("UPDATE workflow_requests SET status='interrupted' WHERE caller=? AND key=?").run('human', key);
+    const reopened = new GitWorkflow(store, target); t.after(() => reopened.close()); await reopened.initialize();
+    assert.equal(journal().status, 'retired'); assert.equal(journal().response, null);
+    await assert.rejects(reopened.approve(input, human, meta), errorCode('IDEMPOTENCY_RETIRED'));
+  }
+});
+
 test('interrupted preparation and validation retain worktrees and never become green', async t => {
   const f = await fixture(t), { job } = await prepared(f);
   f.store.db.prepare("UPDATE workflow_jobs SET status = 'preparing' WHERE id = ?").run(job.id);
@@ -355,7 +392,7 @@ test('plain folders remain advisory and workflow extension leaves base schema ve
   const identity = await discoverProject(root), project = f.store.registerProject(identity, mutation('project.register', identity));
   await assert.rejects(f.call('createWorkspace', { projectId: project.id }), errorCode('GIT_REQUIRED'));
   assert.equal((await f.workflow.reconcile(project.id))[0].mode, 'advisory');
-  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 4);
 });
 
 test('symbolic integration refs cannot redirect promotion onto the original branch', async t => {

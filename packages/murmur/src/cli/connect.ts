@@ -15,7 +15,7 @@ Human review of connection requests; never run these inside an agent chat.
   reject --request ID --revision N
   grants [--project ID]
   revoke --grant ID
-  setup --tool claude --out NEW_DIRECTORY
+  setup --tool <claude|codex> --out NEW_DIRECTORY
 
 Mutations accept --request-id KEY and strict --data JSON or --file FILE (16 KiB).
 --handoff FILE reads a standalone reviewed HandoffDraft for approval. Flags must
@@ -25,10 +25,11 @@ reconnect explicitly reuses only an eligible expired/revoked same-chat binding.
 Requests contain untrusted metadata, not proof of native identity. Decisions in
 approved handoffs remain proposals. No capability, polling secret, human token,
 or native login ticket is returned. No automatic retries or credential renewal.
-Setup exports a Claude Code 2.1.247 plugin into a new directory after metadata-only
-version preflight; it never installs or connects it. A human must explicitly
-resume the original chat with the returned plugin-dir command. Hot attachment
-and other native hosts are unverified.
+Setup exports Claude Code 2.1.247 plugin files or Codex CLI 0.154.0 hooks into a
+new directory after metadata-only version preflight. It never installs or connects
+them. Claude uses the returned plugin-dir resume command. Codex requires a reviewed
+additive hooks.json merge, explicit /hooks trust and native resume of the original
+conversation. Hot attachment and other native hosts are unverified.
 `;
 const actions: Record<string, { flags: string[]; fields?: string[]; route?: string }> = {
   requests: { flags: [] }, grants: { flags: ['project'] }, setup: { flags: ['tool','out'] },

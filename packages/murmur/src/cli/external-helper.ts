@@ -21,13 +21,32 @@ export type ExistingChatHelperOptions = {
   transport?: ExternalTransport;
   timeoutMs?: number;
 };
+export type ApprovedContextPolicy = { minimumIntervalMs?: number; deduplicate?: boolean };
+type ContextDelivery = { attemptedAt: number; generatedAt: number | null; fingerprint: string | null };
+const pendingContextDeliveries = new WeakMap<object, () => Promise<void>>();
+/** Trusted host acknowledgement only, after successful output. Neither copying nor
+ * serializing a result carries this private, one-shot completion capability. */
+export async function acknowledgeApprovedContext(value: unknown, emitted = true): Promise<void> {
+  if (!value || typeof value !== 'object') return;
+  const commit = pendingContextDeliveries.get(value);
+  pendingContextDeliveries.delete(value);
+  try { if (emitted) await commit?.(); } catch { /* Cache failure cannot invalidate already-emitted context. */ }
+}
+/** Transfer the private completion to the bounded host envelope, never its JSON. */
+export function forwardApprovedContextDelivery(source: object, output: object): void {
+  const commit = pendingContextDeliveries.get(source);
+  pendingContextDeliveries.delete(source);
+  if (commit) pendingContextDeliveries.set(output, commit);
+}
 type Observation = { native: NativeBinding; workspaceRoot: string; workspaceIdentity: string };
 type PrivateState = {
   version: 1; observation: Observation; descriptor: PublicConnectionDescriptor;
   candidateCapability: string; pollSecret: string; requestKey: string; input: CreateEnrollmentInput;
   receipt: EnrollmentReceipt | null; connection: ExternalConnection | null; phase: 'pending' | 'active' | 'left' | 'retired';
+  contextDelivery?: ContextDelivery;
 };
 type Loaded = { state: PrivateState; info: Stats };
+type PendingContextDelivery = { observation: Observation; filename: string; info: Stats; stateHash: string; fingerprint: string };
 type MutexPin = { directory: Stats; info: Stats; directoryName: string; filename: string };
 type Call = { aborted: boolean; signal: AbortSignal; observation: Observation; descriptor: PublicConnectionDescriptor; directory: Stats; filename: string; fileInfo?: Stats; mutex?: MutexPin };
 const MAX_STATE_BYTES = 64 * 1024;
@@ -187,13 +206,13 @@ export class ExistingChatHelper {
       throw error;
     }
   }
-  async #withCall<T>(work: (call: Call) => Promise<T>): Promise<T> {
+  async #withCall<T>(work: (call: Call) => Promise<T>, mode: 'locked' | 'read-only' = 'locked', timeoutMs = this.#timeoutMs): Promise<T> {
     const controller = new AbortController();
     const budget = { aborted: false, signal: controller.signal };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => {
       budget.aborted = true; controller.abort(); reject(new MurmurError('External helper timed out. No retry was attempted.', 'EXTERNAL_TIMEOUT', 504));
-    }, this.#timeoutMs); });
+    }, timeoutMs); });
     const execute = async (): Promise<T> => {
       const observation = await this.#observation(); this.#notAborted(budget);
       const directory = await privateDirectory(this.#directory); this.#notAborted(budget);
@@ -201,13 +220,13 @@ export class ExistingChatHelper {
       this.#directoryPin ??= directory;
       const descriptor = await readPublicConnectionFile(this.#descriptorPath); this.#notAborted(budget);
       const call: Call = Object.assign(budget, { observation, directory, descriptor, filename: path.join(this.#directory, `${hash(canonicalJson(observation))}.json`) });
-      const release = await this.#lock(call);
+      const release = mode === 'locked' ? await this.#lock(call) : undefined;
       try {
         await this.#fresh(call);
         const result = await work(call);
         await this.#fresh(call);
         return result;
-      } finally { await release(); }
+      } finally { await release?.(); }
     };
     try { return await Promise.race([execute(), timeout]); }
     catch (error) {
@@ -228,7 +247,7 @@ export class ExistingChatHelper {
     await this.#fresh(call);
     const result = await readPrivateFile(call.filename, MAX_STATE_BYTES);
     if (!result) return null;
-    const raw = selectedFields(result.value, ['version', 'observation', 'descriptor', 'candidateCapability', 'pollSecret', 'requestKey', 'input', 'receipt', 'connection', 'phase']);
+    const raw = selectedFields(result.value, ['version', 'observation', 'descriptor', 'candidateCapability', 'pollSecret', 'requestKey', 'input', 'receipt', 'connection', 'phase', 'contextDelivery']);
     assert(raw.version === 1 && ['pending', 'active', 'left', 'retired'].includes(raw.phase as string), 'Invalid private external state.', 'EXTERNAL_PRIVATE_STATE');
     assert(typeof raw.candidateCapability === 'string' && /^[A-Za-z0-9_-]{43}$/.test(raw.candidateCapability) && typeof raw.pollSecret === 'string' && /^[A-Za-z0-9_-]{43}$/.test(raw.pollSecret) && raw.candidateCapability !== raw.pollSecret, 'Invalid private external proofs.', 'EXTERNAL_PRIVATE_STATE');
     assert(typeof raw.requestKey === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(raw.requestKey), 'Invalid private request key.', 'EXTERNAL_PRIVATE_STATE');
@@ -240,9 +259,17 @@ export class ExistingChatHelper {
     const connection = raw.connection === null ? null : validateExternalConnection(raw.connection);
     if (connection) assert(raw.phase === 'active' && receipt?.state === 'approved' && connection.origin === descriptor.origin && connection.stateId === descriptor.stateId && connection.workspaceRoot === call.observation.workspaceRoot && connection.capability === raw.candidateCapability, 'Stored external connection does not match its approval.', 'EXTERNAL_PRIVATE_STATE');
     else assert(raw.phase !== 'active', 'Active private connection is incomplete.', 'EXTERNAL_PRIVATE_STATE');
+    let contextDelivery: ContextDelivery | undefined;
+    if (raw.contextDelivery !== undefined) {
+      const delivery = selectedFields(raw.contextDelivery, ['attemptedAt', 'generatedAt', 'fingerprint']);
+      const attemptedAt = integer(delivery.attemptedAt, 'attemptedAt', 0, Number.MAX_SAFE_INTEGER);
+      const generatedAt = delivery.generatedAt === null ? null : integer(delivery.generatedAt, 'generatedAt', 0, Number.MAX_SAFE_INTEGER);
+      assert(delivery.fingerprint === null || typeof delivery.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(delivery.fingerprint), 'Invalid private delivery metadata.', 'EXTERNAL_PRIVATE_STATE');
+      contextDelivery = { attemptedAt, generatedAt, fingerprint: delivery.fingerprint as string | null };
+    }
     call.fileInfo = result.info;
     return { info: result.info, state: { version: 1, observation: call.observation, descriptor, candidateCapability: raw.candidateCapability, pollSecret: raw.pollSecret,
-      requestKey: raw.requestKey, input, receipt, connection, phase: raw.phase as PrivateState['phase'] } };
+      requestKey: raw.requestKey, input, receipt, connection, phase: raw.phase as PrivateState['phase'], ...(contextDelivery ? { contextDelivery } : {}) } };
   }
   async #save(call: Call, state: PrivateState): Promise<void> {
     await this.#fresh(call);
@@ -372,38 +399,132 @@ export class ExistingChatHelper {
       }
     });
   }
-  run(operation: ExternalOperation, raw: unknown = {}, key?: string): Promise<unknown> {
+  #operationInput(operation: ExternalOperation, raw: unknown): Record<string, unknown> {
     const input = object(snapshotExternalJson(raw));
     const allowed = ['identity', 'context', 'member-status', 'intent', 'task-status', 'check-plan', 'propose-decision', 'reserve', 'release', 'leave'];
     assert(allowed.includes(operation), 'Unsupported external helper operation.', 'EXTERNAL_INPUT');
     if (['identity', 'member-status', 'leave'].includes(operation)) selectedFields(input, []);
     if (operation === 'context') selectedFields(input, ['after']);
-    return this.#withCall(async call => {
-      const loaded = await this.#load(call), state = loaded?.state;
-      assert(state?.phase === 'active' && state.connection, 'This current native chat has no active private external connection.', 'EXTERNAL_NOT_CONNECTED', 403);
-      const client = new ExternalClient(state.connection, this.#options(call, state));
-      try {
-        switch (operation) {
-          case 'identity': return await client.identity();
-          case 'context': return await client.context(input.after === undefined ? 0 : integer(input.after, 'after', 0, Number.MAX_SAFE_INTEGER));
-          case 'member-status': return await client.memberStatus();
-          case 'intent': return await client.intent(input, key);
-          case 'task-status': return await client.taskStatus(input, key);
-          case 'check-plan': return await client.checkPlan(input, key);
-          case 'propose-decision': return await client.proposeDecision(input, key);
-          case 'reserve': return await client.reserve(input, key);
-          case 'release': return await client.release(input, key);
-          case 'leave': {
-            const result = await client.leave(key);
-            state.phase = 'left'; state.connection = null;
-            await this.#save(call, state);
-            return result;
-          }
+    return input;
+  }
+  async #run(call: Call, operation: ExternalOperation, input: Record<string, unknown>, key?: string): Promise<unknown> {
+    const loaded = await this.#load(call), state = loaded?.state;
+    assert(state?.phase === 'active' && state.connection, 'This current native chat has no active private external connection.', 'EXTERNAL_NOT_CONNECTED', 403);
+    const client = new ExternalClient(state.connection, this.#options(call, state));
+    try {
+      switch (operation) {
+        case 'identity': return await client.identity();
+        case 'context': return await client.context(input.after === undefined ? 0 : integer(input.after, 'after', 0, Number.MAX_SAFE_INTEGER));
+        case 'member-status': return await client.memberStatus();
+        case 'intent': return await client.intent(input, key);
+        case 'task-status': return await client.taskStatus(input, key);
+        case 'check-plan': return await client.checkPlan(input, key);
+        case 'propose-decision': return await client.proposeDecision(input, key);
+        case 'reserve': return await client.reserve(input, key);
+        case 'release': return await client.release(input, key);
+        case 'leave': {
+          const result = await client.leave(key);
+          state.phase = 'left'; state.connection = null;
+          await this.#save(call, state);
+          return result;
         }
-      } catch (error) {
-        await this.#retireInvalidAuthority(call, state, error);
-        throw error;
       }
+    } catch (error) {
+      await this.#retireInvalidAuthority(call, state, error);
+      throw error;
+    }
+  }
+  run(operation: ExternalOperation, raw: unknown = {}, key?: string): Promise<unknown> {
+    const input = this.#operationInput(operation, raw);
+    return this.#withCall(call => this.#run(call, operation, input, key));
+  }
+  #hasApproval(state: PrivateState | undefined): boolean {
+    return state?.phase === 'active' && state.receipt?.state === 'approved'
+      && state.connection !== null && state.connection.expiresAt > Date.now();
+  }
+  /** Read-only local eligibility, NOT evidence that remote authority is still live.
+   * It creates no file or mutex and never polls, activates, or contacts a service.
+   * A caller must use runApproved/refreshApproved, not treat a true peek as a grant.
+   */
+  peekApproved(): Promise<boolean> {
+    return this.#withCall(async call => this.#hasApproval((await this.#load(call))?.state), 'read-only');
+  }
+  /** An automatic host boundary may use ONLY an already-active private proof.
+   * The pre-lock check keeps unrelated/pending/terminal chats entirely read-only.
+   * Lock acquisition and a second load pin the proof again before any operation;
+   * the transport still rechecks fresh native identity/workspace on every request.
+   * Null never means approval was polled or a request should be created/retried.
+   */
+  runApproved(operation: ExternalOperation, raw: unknown = {}, key?: string): Promise<unknown | null> {
+    const input = this.#operationInput(operation, raw);
+    return this.#withCall(async call => {
+      if (!this.#hasApproval((await this.#load(call))?.state)) return null;
+      const release = await this.#lock(call);
+      try {
+        await this.#fresh(call);
+        return await this.#run(call, operation, input, key);
+      } finally { await release(); }
+    }, 'read-only');
+  }
+  async #acknowledgeContext(expected: PendingContextDelivery): Promise<void> {
+    await this.#withCall(async call => {
+      // A completion belongs to one exact preparation, not whichever proof or
+      // attempt happens to be current when stdout eventually finishes.
+      if (call.filename !== expected.filename || canonicalJson(call.observation) !== canonicalJson(expected.observation)) return;
+      const matches = (loaded: Loaded | null): loaded is Loaded => !!loaded && this.#hasApproval(loaded.state)
+        && sameFile(loaded.info, expected.info) && hash(canonicalJson(loaded.state)) === expected.stateHash;
+      if (!matches(await this.#load(call))) return;
+      const release = await this.#lock(call);
+      try {
+        const loaded = await this.#load(call);
+        if (!matches(loaded)) return;
+        loaded.state.contextDelivery = { attemptedAt: loaded.state.contextDelivery!.attemptedAt, generatedAt: Date.now(), fingerprint: expected.fingerprint };
+        await this.#save(call, loaded.state);
+      } finally { await release(); }
+    }, 'read-only', Math.min(this.#timeoutMs, 100));
+  }
+  /** Optional trusted-host delivery policy. Only hashes/timestamps are persisted,
+   * inside this proof epoch and under its existing mutex, never raw context/input.
+   * Generation alone is not delivery: acknowledgeApprovedContext must receive
+   * the exact returned object after successful host output to enable dedupe.
+   * Defaults preserve explicit callers and other hosts' existing behavior.
+   */
+  refreshApproved(after = 0, policy?: ApprovedContextPolicy): Promise<unknown | null> {
+    if (policy === undefined) return this.runApproved('context', { after });
+    integer(after, 'after', 0, Number.MAX_SAFE_INTEGER);
+    const configuration = selectedFields(snapshotExternalJson(policy), ['minimumIntervalMs', 'deduplicate']);
+    const interval = integer(configuration.minimumIntervalMs ?? 1000, 'minimumIntervalMs', 0, 30_000);
+    assert(configuration.deduplicate === undefined || typeof configuration.deduplicate === 'boolean', 'Invalid context delivery policy.', 'EXTERNAL_INPUT');
+    let delivery: PendingContextDelivery | undefined;
+    return this.#withCall(async call => {
+      if (!this.#hasApproval((await this.#load(call))?.state)) return null;
+      const release = await this.#lock(call);
+      try {
+        const loaded = await this.#load(call), state = loaded?.state;
+        if (!state || !this.#hasApproval(state)) return null;
+        const now = Date.now(), previous = state.contextDelivery;
+        if (previous && now >= previous.attemptedAt && now - previous.attemptedAt < interval) return null;
+        // Persist the attempt before network access: outages cannot cause a hook
+        // storm, and a crashed process never leaves an indefinite in-memory gate.
+        state.contextDelivery = { attemptedAt: now, generatedAt: previous?.generatedAt ?? null, fingerprint: previous?.fingerprint ?? null };
+        await this.#save(call, state);
+        const context = await this.#run(call, 'context', { after });
+        const value = object(context);
+        assert(typeof value.briefing === 'string', 'Invalid scoped context response.', 'EXTERNAL_RESPONSE_INVALID', 502);
+        const fingerprint = hash(value.briefing);
+        if (configuration.deduplicate && previous?.fingerprint === fingerprint && previous.generatedAt !== null
+          && now >= previous.generatedAt && now - previous.generatedAt < 60_000) return null;
+        // Do not commit a dedupe fingerprint while this preparation can still
+        // fail its final identity checks or deadline. Keep only the attempt gate.
+        delivery = { observation: call.observation, filename: call.filename, info: call.fileInfo!, stateHash: hash(canonicalJson(state)), fingerprint };
+        return context;
+      } finally { await release(); }
+    }, 'read-only').then(context => {
+      if (delivery && context && typeof context === 'object') {
+        const expected = delivery;
+        pendingContextDeliveries.set(context, () => this.#acknowledgeContext(expected));
+      }
+      return context;
     });
   }
   refresh(after = 0): Promise<unknown> { return this.run('context', { after }); }

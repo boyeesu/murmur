@@ -31,7 +31,7 @@ for (const file of ['LICENSE', 'README.md']) {
   await cp(fileURLToPath(new URL(`../${file}`, import.meta.url)), path.join(output, '..', file));
 }
 
-const documentation = ['user-guide.md', 'release-checklist.md', 'coordination.md', 'workflow.md', 'protocol.md', 'support-matrix.md', 'verification.md', 'agent-bridge.md', 'managed-launch.md', 'launch-service.md', 'mcp.md', 'context-hooks.md', 'native-integrations.md', 'opencode.md', 'session-linking.md', 'verification-existing-chats.md'];
+const documentation = ['user-guide.md', 'release-checklist.md', 'coordination.md', 'workflow.md', 'protocol.md', 'support-matrix.md', 'verification.md', 'agent-bridge.md', 'managed-launch.md', 'launch-service.md', 'mcp.md', 'context-hooks.md', 'native-integrations.md', 'opencode.md', 'session-linking.md', 'verification-existing-chats.md', 'codex-existing-chat.md', 'operations.md', 'data-lifecycle.md', 'release-notes.md'];
 const packagedDocs = path.join(output, '..', 'docs');
 await mkdir(packagedDocs, { recursive: true });
 for (const file of documentation) {
@@ -49,7 +49,7 @@ for (const [file, marker] of [['claude/SKILL.md', 'NATIVE_ADAPTER_UNVERIFIED'], 
 }
 
 // Only explicit bundled native templates, never user/native configuration.
-for (const file of ['claude/.claude-plugin/plugin.json', 'claude/skills/connect/SKILL.md', 'claude/hooks/hooks.json']) {
+for (const file of ['claude/.claude-plugin/plugin.json', 'claude/skills/connect/SKILL.md', 'claude/hooks/hooks.json', 'codex/hooks.json']) {
   const destination = path.join(output, 'native', file);
   await mkdir(path.dirname(destination), { recursive: true });
   await cp(fileURLToPath(new URL('../packages/murmur/assets/native/' + file, import.meta.url)), destination);

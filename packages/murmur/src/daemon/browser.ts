@@ -63,6 +63,11 @@ export function beginEventStream(request: IncomingMessage, response: ServerRespo
   const tick = () => {
     if (response.destroyed || !alive()) { clearInterval(timer); response.end(); return; }
     try {
+      const history = store.eventHistory(projectId, cursor);
+      if (history.historyPruned) {
+        cursor = history.prunedThrough;
+        if (!response.write(`id: ${cursor}\nevent: reset\ndata: ${JSON.stringify({ reason: 'history_pruned', ...history })}\n\n`)) { response.end(); return; }
+      }
       const events = store.events(projectId, cursor);
       if (!events.length) { if (!response.write(': heartbeat\n\n')) response.end(); return; }
       for (const event of events) {

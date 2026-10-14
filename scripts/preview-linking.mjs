@@ -9,7 +9,9 @@ import { startDaemon } from '../packages/murmur/dist/daemon/server.js';
 import { request } from '../packages/murmur/dist/cli/client.js';
 import { repository } from '../tests/helpers.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-if (process.argv.length !== 3) throw new Error('Pass a dedicated marked preview state directory.');
+if (process.argv.length !== 3 && (process.argv.length !== 5 || process.argv[3] !== '--entry-port')) throw new Error('Pass a dedicated marked preview state directory and optional --entry-port PORT.');
+const entryPort = process.argv[3] === '--entry-port' ? Number(process.argv[4]) : 0;
+if (process.argv[3] && (!Number.isInteger(entryPort) || entryPort < 1024 || entryPort > 65535)) throw new Error('Invalid fixture entry port.');
 const state = await realpath(process.argv[2]), root = path.dirname(state);
 const marker = JSON.parse(await readFile(path.join(root, 'fixture-owner.json'), 'utf8'));
 if (marker.kind !== 'murmur-linking-preview' || !path.basename(root).startsWith('murmur-link-preview-')) throw new Error('Refusing an unmarked preview directory.');
@@ -56,14 +58,18 @@ try {
   const entryKey = randomBytes(24).toString('base64url');
   entry = http.createServer((incoming, outgoing) => {
     void (async () => {
-      if (incoming.method !== 'GET' || incoming.url !== `/enter/${entryKey}`) { outgoing.writeHead(404); outgoing.end(); return; }
+      // An explicitly configured fixture entry port survives preview auto-reloads:
+      // redirect its loopback root through the NORMAL disposable login flow.
+      // Never change the production daemon's exact Host/Origin checks.
+      const rootEntry = entryPort && incoming.url === '/' && [ `localhost:${entryPort}`, `127.0.0.1:${entryPort}` ].includes(incoming.headers.host);
+      if (incoming.method !== 'GET' || incoming.headers.origin || (!rootEntry && incoming.url !== `/enter/${entryKey}`)) { outgoing.writeHead(404); outgoing.end(); return; }
       await ensurePendingFixture();
       const ticket = await request(state, 'POST', '/v1/browser/ticket', {});
       const url = new URL(ticket.url); url.searchParams.set('preview', randomUUID());
       outgoing.writeHead(302, { Location: url.href, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); outgoing.end();
     })().catch(() => { outgoing.writeHead(500); outgoing.end('Disposable fixture entry failed.'); });
   });
-  await new Promise((resolve, reject) => { entry.once('error', reject); entry.listen(0, '127.0.0.1', resolve); });
+  await new Promise((resolve, reject) => { entry.once('error', reject); entry.listen(entryPort, '127.0.0.1', resolve); });
   console.log(`Murmur linking preview listening on http://127.0.0.1:${daemon.port}`);
   console.log(`Disposable fixture entry: http://127.0.0.1:${entry.address().port}/enter/${entryKey}`);
   let stopping = false;

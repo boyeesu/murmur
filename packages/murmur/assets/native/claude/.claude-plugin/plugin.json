@@ -1,5 +1,5 @@
 {
   "name": "murmur",
-  "version": "0.5.0",
+  "version": "0.6.0-alpha.1",
   "description": "Human-approved current-chat Murmur commands for Claude Code 2.1.247."
 }

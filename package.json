@@ -25,10 +25,13 @@
     "check": "npm run typecheck && npm test",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "murmur": "node packages/murmur/dist/cli/index.js",
-    "pack": "npm run typecheck && npm run build && node scripts/pack.mjs"
+    "pack": "npm run typecheck && npm run build && node scripts/pack.mjs",
+    "sbom": "node scripts/sbom.mjs",
+    "release:check": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
     "typescript": "7.0.2"
-  }
+  },
+  "version": "0.6.0-alpha.1"
 }

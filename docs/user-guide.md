@@ -1,20 +1,23 @@
 # Using Murmur
 
-Murmur is a **local 0.5 alpha** for coordinating parallel coding work. Managed
+Murmur is a **local 0.6 development alpha** for coordinating parallel coding work. Managed
 launchers create fresh tasks with automatic registration, workspace preparation,
 startup context, and scoped commands. **Claude Code 2.1.247** also has a same-chat
 connector: export a plugin, explicitly resume the original conversation, request
-human approval, then refresh shared context. The original human-operated workflow,
+human approval, then refresh shared context. **Codex CLI 0.154.0** also supports
+reviewed hook installation and same-conversation resume, with automatic prompt
+context refresh after explicit activation. The original human-operated workflow,
 project groups, and reviewed handoffs remain available in **Connections**.
 
 **The practical distinction:** the Claude connector is verified with headless native
 fixtures and native-authored history, **not a real-user chat/model trial**. It does not
 discover sessions, import history, hot-install into an already-open CLI, or automatically
-publish intent in the background. Other native hosts/Claude versions remain gated.
+publish intent in the background. Codex has its separately verified CLI flow;
+OpenCode, Cursor and untested native versions remain gated.
 Managed MCP/advisory hooks are separate features whose native verification differs
 by tool. Explicit context delivery is not a guarantee of model compliance. See
 [groups and session connections](session-linking.md) and the
-[support matrix](support-matrix.md).
+[support matrix](support-matrix.md), plus the [Codex existing-chat guide](codex-existing-chat.md).
 
 ## Start with the right mental model
 
@@ -38,12 +41,14 @@ editing and reviewed Git integration.
 - [Link separate responsibilities in Connections](#optional-group-related-work-in-connections)
 - [Use separate workspaces](#6-give-each-independent-editing-task-its-own-workspace)
 - [Submit and integrate committed work](#7-submit-committed-work)
+- [Manage integrations](operations.md)
+- [Maintain credentials and backups](data-lifecycle.md)
 - [Common questions](#common-questions)
 
 ## What you need
 
 - A local computer with Node.js and Git.
-- The source folder or the supplied `murmur-local-0.5.0.tgz` package.
+- The source folder or the supplied `murmur-local-0.6.0-alpha.1.tgz` package.
 - A Git-backed project **with at least one commit** for workspace isolation and
   integration. An ordinary folder
   can use task/decision coordination, but not the Git workflow.
@@ -62,8 +67,10 @@ Choose **one** installation method.
 
 **Upgrading:** stop the old daemon and privately back up its complete state
 directory before starting a new version. The migrations preserve existing session and launch data, but older binaries
-may not open the upgraded database. Never put the
-backup, which can contain credentials and uncommitted workspaces, in a public repo.
+must refuse the upgraded **v4** database. Never put the backup, which can contain
+credentials and private state, in a public repo. A whole-state-directory backup is
+different from the new SQLite-only maintenance backup; preserve workspaces and the
+installer registry separately. See [data lifecycle](data-lifecycle.md).
 
 ### Run from source
 
@@ -102,7 +109,7 @@ or editor for the coding agent later.
 From the folder containing the downloaded `.tgz` file:
 
 ```bash
-npm install --global --ignore-scripts --offline ./murmur-local-0.5.0.tgz
+npm install --global --ignore-scripts --offline ./murmur-local-0.6.0-alpha.1.tgz
 ```
 
 Use a user-managed Node installation. If global installation requires permissions
@@ -291,9 +298,11 @@ Or join with the exact **43-character base64url** invite from Connections:
 Use `/murmur:connect status`, `/murmur:connect leave`, and `/murmur:connect help` as
 needed. Status can also activate an approved pending request; refresh adds context.
 Start/join only request approval. Leave preserves the task, files, and native chat.
-Plain prompts do not automatically publish intent or refresh context; invoke refresh
-again when relevant work changes. The namespaced command is **not** `/murmur` or
-`@murmur`, and there are no model-supplied session/cwd selectors.
+After explicit activation, ordinary prompts refresh only the approved active
+connection. Claude tool-boundary context is advisory and its native post-tool
+delivery remains unverified. There is no automatic intent publication. Explicit
+refresh remains available. The namespaced command is **not** `/murmur` or `@murmur`,
+and there are no model-supplied session/cwd selectors.
 
 Ordinary resume retains the UUID/valid approved scope. Observed fork and clear create
 new UUIDs and report disconnected rather than inheriting the parent grant. They need
@@ -302,7 +311,9 @@ valid; clear does not revoke that original access globally. Murmur does not scan
 import native history. Read the [complete setup and lifecycle guide](session-linking.md#connect-an-existing-claude-conversation),
 including absolute source-CLI commands that let you stay in the original project.
 
-### Completion checklist: what 0.5 does and does not establish
+<a id="completion-checklist-what-05-does-and-does-not-establish"></a>
+
+### Completion checklist: what 0.6 does and does not establish
 
 - [x] Claude 2.1.247 export → explicit same-chat resume → request → human review → refresh.
 - [x] Headless native production-plugin checks for separate same-cwd owners, resumed
@@ -310,8 +321,11 @@ including absolute source-CLI commands that let you stay in the original project
 - [x] Existing 0.4 manual/API groups, reviewed handoffs, fixed expiry, and separate ownership.
 - [ ] Your own real-chat/model trial and confirmation that the model follows the context.
 - [ ] Direct hot attachment/reload of a plugin into an already-open CLI.
-- [ ] Cross-host existing-chat support for Codex, OpenCode, Cursor, or other Claude versions.
-- [ ] Automatic background intent publication or automatic ongoing context refresh.
+- [x] Codex CLI 0.154.0 implementation for reviewed hooks, native resume and approved-session refresh. Historical native evidence used trust bypass and a pretrusted fixture.
+- [ ] Normal interactive Codex project/hook activation.
+- [x] Reviewed integration lifecycle and human-only credential, retention and backup controls.
+- [ ] Existing-chat support for OpenCode, Cursor, or untested Claude/Codex versions.
+- [ ] Automatic existing-chat intent publication and observed-write reconciliation. Approved-session context refresh is a separate implemented feature.
 - [ ] Broader native MCP acceptance, restricted managed resume, and automatic four-tool coordination.
 
 The checked native items used **native-authored disposable history**, empty HOME/config,
@@ -408,7 +422,9 @@ murmur context --project PROJECT_ID --task TASK_ID
 The CLI returns JSON, including a `briefing` string. **This copy/paste step is
 manual for manual members.** Managed tasks can use their scoped CLI/MCP bridge
 where supported. The approved Claude 2.1.247 same-chat connector retrieves context
-through explicit `/murmur:connect refresh`; other native existing-chat hosts remain gated.
+through explicit `/murmur:connect refresh`. Codex 0.154.0 uses `murmur-connect refresh`
+for activation, then refreshes automatically on ordinary prompts. See the
+[Codex guide](codex-existing-chat.md); other native existing-chat hosts remain gated.
 
 For example, tell the agent: “Work on this task only in the workspace I opened.
 Here is the current Murmur context. Treat other tasks' unmerged implementations
@@ -639,7 +655,7 @@ task requires `--confirm`; it is not the same as deleting its workspace or files
 
 | Question | Current answer |
 | --- | --- |
-| Will Murmur find or take over my existing sessions? | No automatic discovery or takeover. Claude 2.1.247 can use an exported plugin and explicit native resume of the original conversation; other native hosts remain gated. Managed launchers start new tasks. |
+| Will Murmur find or take over my existing sessions? | No automatic discovery or takeover. Claude 2.1.247 uses an exported plugin and Codex 0.154.0 uses reviewed hooks with explicit native resume of the original conversation; untested hosts remain gated. Managed launchers start new tasks. |
 | Does a group share task ownership? | No. Each member has its own session/task binding; feature keys remain exclusive active-work claims. |
 | Does an invite or public request link grant access? | No. Invitations only request approval; public request references require normal human browser login. |
 | Does expiry stop my original chat? | No. It revokes scoped access, not native processes or task ownership. |

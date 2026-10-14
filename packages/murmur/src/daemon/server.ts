@@ -1,13 +1,13 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CoordinationStore } from '../storage/store.js';
 import { STATE_HEADER, PROTOCOL_HEADER } from '../protocol/agent.js';
 import { ExtendedServices } from './extensions.js';
 import { BrowserAccess, beginEventStream, serveDashboard } from './browser.js';
-import { PROTOCOL_VERSION, TOOLS, assert, authorizeProject, authorizeSession, callerId, integer, MurmurError, object, requireHuman, text } from '../protocol/index.js';
+import { PROTOCOL_VERSION, TOOLS, assert, authenticatedSessionPrincipal, authorizePrincipal, authorizeProject, authorizeSession, callerId, withAuthorization, integer, MurmurError, object, requireHuman, text } from '../protocol/index.js';
 import type { Mutation, Principal, Tool } from '../protocol/index.js';
 import { discoverProject, normalizeResources } from '../workspaces/identity.js';
 import { prepareStateDirectory, stateIdentity, statePort } from './config.js';
@@ -184,7 +184,11 @@ export async function startDaemon(inputDirectory: string) {
       else {
         const session = store.authenticateSession(credential);
         assert(session, 'Invalid credential.', 'UNAUTHORIZED', 401);
-        principal = { kind: 'session', sessionId: session.id, projectId: session.projectId };
+        const tokenHash = createHash('sha256').update(credential).digest('hex');
+        principal = authenticatedSessionPrincipal({ kind: 'session', sessionId: session.id, projectId: session.projectId }, () => {
+          store!.assertSessionCredential(session.id, tokenHash);
+          if (session.credentialMode === 'managed') services!.launches.assertAgentBinding(session.id);
+        });
         if (session.credentialMode === 'managed') {
           assert(origin === undefined, 'Managed agent calls use the scoped non-browser interface.', 'FORBIDDEN', 403);
           checkManagedIdentity();
@@ -214,25 +218,28 @@ export async function startDaemon(inputDirectory: string) {
           const project = text(projectId, 'projectId');
           const after = integer(Number(url.searchParams.get('after') ?? 0), 'after', 0, Number.MAX_SAFE_INTEGER);
           const isBrowser = browser.authenticated(credential);
-          beginEventStream(request, response, store, project, after, () => !closing && (!isBrowser || browser.authenticated(credential))); return;
+          beginEventStream(request, response, store, project, after, () => {
+            if (closing || isBrowser && !browser.authenticated(credential)) return false;
+            try { authorizePrincipal(principal); return true; } catch { return false; }
+          }); return;
         }
         const extended = await services!.read(url, principal);
-        if (extended.handled) { reply(response, 200, extended.result); return; }
+        if (extended.handled) { authorizePrincipal(principal); reply(response, 200, extended.result); return; }
         if (url.pathname === '/v1/events') {
           const project = text(projectId, 'projectId');
           const after = integer(Number(url.searchParams.get('after') || 0), 'after', 0, Number.MAX_SAFE_INTEGER);
           const events = store.events(project, after);
-          reply(response, 200, { events, nextCursor: Number(events.at(-1)?.sequence ?? after) }); return;
+          reply(response, 200, { events, nextCursor: Number(events.at(-1)?.sequence ?? after), history: store.eventHistory(project, after) }); return;
         }
         throw new MurmurError('Unknown endpoint.', 'NOT_FOUND', 404);
       }
       assert(request.method === 'POST', 'Method not supported.', 'METHOD_NOT_ALLOWED', 405);
-      if (url.pathname.startsWith('/v1/groups/') || url.pathname.startsWith('/v1/connections/')) connectionQuery(url, []);
+      if (['/v1/groups/', '/v1/connections/', '/v1/maintenance/', '/v1/integrations/'].some(prefix => url.pathname.startsWith(prefix))) connectionQuery(url, []);
       const body = await readBody(request);
       if (managedSessionId) services!.launches.authorizeAgent(managedSessionId, 'POST', url, body);
       const key = text(request.headers['idempotency-key'], 'Idempotency-Key', 128);
       assert(/^[a-zA-Z0-9_.:-]+$/.test(key), 'Invalid Idempotency-Key.');
-      const mutation: Mutation = { key, caller: callerId(principal), operation: url.pathname, input: body };
+      const mutation: Mutation = withAuthorization(principal, { key, caller: callerId(principal), operation: url.pathname, input: body });
       if (['/v1/projects', '/v1/sessions', '/v1/reservations/acquire'].includes(url.pathname)) {
         if (url.pathname === '/v1/reservations/acquire') {
           const sessionId = text(body.sessionId, 'sessionId');
@@ -245,7 +252,7 @@ export async function startDaemon(inputDirectory: string) {
         if (cached.found) { reply(response, 200, cached.response); return; }
       }
       const extended = await services!.write(url.pathname, body, principal, mutation);
-      if (extended.handled) { reply(response, 200, extended.result); return; }
+      if (extended.handled) { authorizePrincipal(principal); reply(response, 200, extended.result); return; }
       let result: unknown;
       if (url.pathname === '/v1/daemon/stop') {
         requireHuman(principal);

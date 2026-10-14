@@ -8,6 +8,35 @@ The native documentation's stdin fields and `hookSpecificOutput.additionalContex
 
 Claude 2.1.247 integration must not assume newer fields or configuration flags such as `scratchpad_dir`, `mcp_server`, or `onFailure`. Unknown input fields are simply ignored. Codex 0.154.0 hook configuration requires its native configuration-hash approval; the launcher/user must complete that approval. These hooks do not approve hashes or bypass native trust, approval, sandbox, or permission controls.
 
+The separate [Codex existing-chat connector](codex-existing-chat.md) has actual
+CLI 0.154.0 fixture evidence for UserPromptSubmit context delivery and ordinary
+prompt refresh. It uses approved external grants, not this managed AgentClient
+flow. That evidence does not lift the managed automatic configuration gate or
+prove interactive hook trust, hot loading or model obedience.
+
+## Separate approved existing-chat automation
+
+The existing-chat Claude connector now refreshes active, explicitly approved grants
+at ordinary prompts and tool boundaries. Codex refreshes at ordinary prompts. These
+use the external helper, not the managed environment described below. Unlinked or
+locally pending chats never auto-enroll, poll approvals, activate, or create locks.
+Every active call rechecks private proof, native identity and canonical workspace.
+Claude automatic hooks have a short deadline and proof-epoch-bound throttling; only
+hashes and timing metadata are cached. Raw tool input/output is not retained.
+
+These hooks cannot approve tools, rewrite inputs, turn observed activity into intent,
+or infer task completion from stop/idle. Pre-tool context is not a candidate-write
+plan check or evidence the model replanned. Native post-tool context delivery remains
+unverified. Structured publication is disabled because successful native PostToolUse
+receipt routing was not verified under normal permissions. The separate actorless
+request formatter has no filesystem, credential or HTTP authority and is not
+registered in usable native exports. Its receipt means awaiting a native bridge,
+not published.
+
+Retention gaps appear explicitly in context metadata and bounded briefings. Managed
+tool-hook deduplication never hides a reported history gap as an unchanged empty
+page. Missing events cannot be recovered from a current-state snapshot.
+
 ## Command and launch environment
 
 The CLI entry point receives arguments after `hook`:

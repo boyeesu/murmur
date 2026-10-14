@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__MURMUR_FIXED_HOOK_COMMAND__",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

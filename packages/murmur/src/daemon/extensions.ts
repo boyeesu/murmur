@@ -1,4 +1,7 @@
 import { LaunchService } from '../core/launches.js';
+import { MaintenanceService } from '../core/maintenance.js';
+import { InstallationService } from '../integrations/index.js';
+import { readAdministration, writeAdministration } from './administration.js';
 import { GroupsService } from '../core/groups.js';
 import { ExternalGrantService } from '../core/external-grants.js';
 import { readConnections, writeConnections } from './connections.js';
@@ -17,6 +20,8 @@ export class ExtendedServices {
   launches: LaunchService;
   groups: GroupsService;
   external: ExternalGrantService;
+  maintenance: MaintenanceService;
+  integrations: InstallationService;
   private externalSweep: NodeJS.Timeout | undefined;
   constructor(store: CoordinationStore, directory: string, runtime: { origin: string; stateId: string; instanceId: string }) {
     this.coordination = new CoordinationService(store);
@@ -25,6 +30,11 @@ export class ExtendedServices {
     this.launches = new LaunchService(store, this.workflow, this.coordination, runtime);
     this.groups = new GroupsService(store, this.coordination);
     this.external = new ExternalGrantService(store, this.coordination, this.groups, runtime);
+    this.maintenance = new MaintenanceService(store);
+    this.integrations = new InstallationService({ stateDirectory: directory, linkedGrants: async query =>
+      this.external.listGrants({ kind: 'human' }).filter(grant => grant.workspaceRoot === query.projectRoot && store.session(grant.sessionId).tool === query.provider)
+        .map(grant => ({ grantId: grant.id, projectId: grant.projectId, sessionId: grant.sessionId,
+          status: grant.revokedAt !== null ? 'revoked' : grant.expiresAt <= store.now() ? 'expired' : 'active' })) });
   }
   async initialize(): Promise<void> {
     await this.workflow.initialize();
@@ -41,6 +51,8 @@ export class ExtendedServices {
     this.workflow.close(); await this.launches.close(); await this.observer.close();
   }
   async read(url: URL, principal: Principal): Promise<{ handled: boolean; result?: unknown }> {
+    const administration = await readAdministration(this.maintenance, this.integrations, url, principal);
+    if (administration.handled) return administration;
     const connection = await readConnections(this.groups, this.external, url, principal);
     if (connection.handled) return connection;
     if (url.pathname === '/v1/launches') {
@@ -78,6 +90,8 @@ export class ExtendedServices {
     return { handled: true, result };
   }
   async write(endpoint: string, body: Record<string, unknown>, principal: Principal, mutation: Mutation): Promise<{ handled: boolean; result?: unknown }> {
+    const administration = await writeAdministration(this.maintenance, this.integrations, endpoint, body, principal, mutation);
+    if (administration.handled) return administration;
     const connection = await writeConnections(this.groups, this.external, endpoint, body, principal, mutation);
     if (connection.handled) return connection;
     const coordination = this.coordination;

@@ -27,6 +27,10 @@ test('packed CLI installs offline and runs outside the source checkout', async t
   assert(info.files.some(file => file.path === 'dist/native/claude/skills/connect/SKILL.md'));
   assert(info.files.some(file => file.path === 'dist/native/claude/hooks/hooks.json'));
   assert(info.files.some(file => file.path === 'docs/session-linking.md'));
+  assert(info.files.some(file => file.path === 'dist/native/codex/hooks.json'));
+  assert(info.files.some(file => file.path === 'docs/codex-existing-chat.md'));
+  assert(info.files.some(file => file.path === 'docs/operations.md'));
+  assert(info.files.some(file => file.path === 'docs/data-lifecycle.md'));
   assert(info.files.some(file => file.path === 'docs/verification-existing-chats.md'));
   assert(!info.files.some(file => file.path.includes('daemon.json') || file.path.includes('.claude') && file.path !== 'dist/native/claude/.claude-plugin/plugin.json'));
   for (const name of ['@modelcontextprotocol/sdk', 'zod', 'zod-to-json-schema', 'ajv', 'express']) {
@@ -56,6 +60,9 @@ test('packed CLI installs offline and runs outside the source checkout', async t
   const native = await execute(process.execPath, [cli, 'native', '--help'], { cwd: installation, env, timeout: 10000 });
   assert.equal(JSON.parse(native.stdout).claude.enabled, true);
   assert.equal(JSON.parse(native.stdout).claude.hotAttachVerified, false);
+  assert.equal(JSON.parse(native.stdout).codex.enabled, true);
+  assert.equal(JSON.parse(native.stdout).codex.hotAttachVerified, false);
+  assert.equal(JSON.parse(native.stdout).codex.realModelVerified, false);
   await assert.rejects(execute(process.execPath, [cli, 'native', 'start'], { cwd: installation, env, timeout: 10000 }), error => error.stderr.includes('NATIVE_ADAPTER_UNVERIFIED') && !error.stdout);
   const assets = path.join(installation, 'node_modules', 'murmur-local', 'dist', 'native', 'claude');
   assert((await readFile(path.join(assets, 'skills', 'connect', 'SKILL.md'), 'utf8')).includes('/murmur:connect'));

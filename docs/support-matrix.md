@@ -1,10 +1,12 @@
-# Capability matrix — 0.5 development alpha
+# Capability matrix — 0.6 development alpha
 
 Implementation, generated configuration, native-host evidence, and model behavior
-are separate states. The enabled same-chat connector is **Claude Code 2.1.247 only**,
-using explicit plugin loading and native resume. No row claims all four native hosts
-are enabled, universal conflict prevention, direct hot attachment, or native-process
-control from a group connection.
+are separate states. Version-scoped same-chat implementations exist for **Claude Code
+2.1.247** and **Codex CLI 0.154.0**, with explicit native activation and resume.
+Codex's native fixture evidence depends on historical project pretrust and hook-trust
+bypass; normal interactive activation is not verified. No row claims all four native
+hosts are enabled, universal conflict prevention, direct hot attachment, or
+native-process control from a group connection.
 
 ## Group and connection support
 
@@ -37,9 +39,9 @@ clients, strict schemas, fixture-daemon calls, and managed fake-native hosts. Th
 does not prove a native host accepted its configuration or a model used it correctly.
 `doctor` distinguishes implementation/executable availability from verified behavior;
 uninspected configured/connected values must not be inferred from other signals.
-The Claude same-chat connector below is a fixed native hook, **not shared-chat MCP**.
+The Claude and Codex same-chat connectors below use fixed native hooks, **not shared-chat MCP**.
 
-## Existing-chat native support — 0.5 checkpoint, 2026-10-14
+## Existing-chat native support — accumulated evidence, 2026-10-14
 
 | Application / flow | Evidence | Production existing-chat status |
 | --- | --- | --- |
@@ -51,13 +53,16 @@ The Claude same-chat connector below is a fixed native hook, **not shared-chat M
 | Native fork and clear | Fork creates a new UUID; clear emits reset and a new UUID; production `status` reports disconnected for both | No inherited parent grant; own new request/approval required |
 | Membership leave | Only the caller's grant is revoked; tasks and the other chat's grant remain | Does not complete tasks or stop native chats |
 | Direct hot attachment/reload in an already-open chat | Not verified; loading before resume is a different flow | **Unverified** |
-| Codex, OpenCode, Cursor; other Claude versions | No complete verified existing-chat action/lifecycle contract | **Gated** |
+| Codex CLI 0.154.0, reviewed hook install and exact-thread resume | Actual CLI/production hook with isolated static responder verified approval, resumed developer-context delivery, fresh decisions on ordinary prompts, separate same-cwd owners, native fork/new-thread isolation and leave | **Enabled for this version and flow**; parent-conversation scope includes subagents; interactive hook trust, desktop/web and hot attachment unverified |
+| OpenCode, Cursor; untested Claude/Codex versions | No complete verified existing-chat action/lifecycle contract | **Gated** |
 | Generic/shared-chat MCP attachment or automatic background publication | Not implemented as the existing-chat connector | **Gated / not claimed** |
 | Process already carrying `MURMUR_AGENT_` / `MURMUR_EXTERNAL_` environment markers | Hook rejects with `NATIVE_ALREADY_SCOPED` before discovery, even for partial/empty markers | Use the existing scoped commands; no second connection or scope-marker bypass. |
 
-The command is `/murmur:connect`, not an unconditional `/murmur` or `@murmur` alias.
-Refresh is explicit and command-driven, not automatic background synchronization,
-intent publication, or proof the model obeyed context. Native conversation history
+The Claude command is `/murmur:connect`, not an unconditional `/murmur` or `@murmur` alias.
+Explicit refresh activates the approved connection. Ordinary prompts then refresh
+already-active context without polling approval or renewing the grant. Claude tool
+boundary advisory hooks are implemented and fixture-tested; native post-tool delivery
+is not verified. None of this establishes intent publication or model obedience. Native conversation history
 stays with Claude; Murmur does not scan or import it. IDs/cwd alone are not credentials.
 The observed new-UUID clear behavior is version-specific, not proof of safe same-ID
 clear on a different host/version.
@@ -67,6 +72,16 @@ loopback API responder; **no actual LLM inference**. Later explicit lifecycle ru
 used the existing outer environment. The additional nested OS sandbox was not
 established, and no absence-of-Keychain-access proof is claimed. See the
 [dated native record](verification-existing-chats.md) for the precise boundaries.
+
+Codex uses ordinary `murmur-connect` chat messages, not slash commands. Start/join
+requires human approval; explicit status/refresh activates the grant. Ordinary
+prompts then refresh only already-approved active connections, without enrollment,
+new unlinked helper files, approval polling or renewal. This is not automatic
+publication or model-obedience evidence. Its historical native fixture used hook-trust bypass and a pretrusted disposable
+project. It made no model tool calls, so absence of sandbox-bypass flags does not
+establish runtime permission enforcement. That conditional evidence does not verify
+normal native activation. The current probe no longer bypasses or preseeds trust. See [Codex setup and evidence](codex-existing-chat.md).
+The separate managed Codex automatic hook-configuration gate above is unchanged.
 
 ### Historical 0.4 native subset — 2026-10-14
 
@@ -99,6 +114,23 @@ substitute. Native trust policy still applies.
 
 See [groups and approved connections](session-linking.md), [MCP](mcp.md),
 [native configuration](native-integrations.md), [context hooks](context-hooks.md),
-[OpenCode](opencode.md), and [verification](verification.md). Final 0.5 full-suite and
+[OpenCode](opencode.md), and [verification](verification.md). Final 0.6 full-suite and
 package acceptance, supported platforms, restricted managed resume, and real model
 trials remain separate release checks; no new aggregate test total is asserted here.
+
+## Operations and release boundaries
+
+| Surface | Implemented | Verification boundary |
+| --- | --- | --- |
+| Claude integration lifecycle | Versioned private bundles, preview/apply/update/rollback/removal | Bundle only; native loaded/trusted state remains unverified. Explicit plugin loading and resume required. |
+| Codex integration lifecycle | Additive project JSONC hook edits, exact review, preservation and recovery | Native hooks and project trust still require the user's normal approval; version confirmation remains required. |
+| Maintenance | Manual credential CAS/revocation/rotation, explicit retention with permanent tombstones, consistent private backup and new-directory restore | Human authority only. Restore invalidates copied authentication and requires recovery/reapproval. No source cleanup. |
+| Operations dashboard | Reviewed installer and maintenance controls | Installed, configured, loaded and connected are separate. Credential rotation and offline restore remain CLI-only. |
+| OpenCode 2.0.12 | Actual V2 callback/lifecycle probes and disabled adapter contracts | Committed rewind preserves ID and creation time, so those fields cannot prove a new incarnation. Existing-chat enablement is refused. |
+| Cursor | Disabled metadata/parser contract | No installed CLI or editor/CLI lifecycle proof. |
+| Real-model acceptance | Not passed | Claude lacks native login; Codex's attempted live request was denied before model events. No five-session acceptance. |
+| Platforms and advisories | Local macOS/Node 26 checks; CI workflow and local dependency inventory | Node 24/Linux and current remote advisories remain unverified; Docker/network access is blocked. |
+
+See [operations](operations.md), [data lifecycle](data-lifecycle.md), and the
+[release checklist](release-checklist.md). Publication is not enabled by a local
+fixture result or by building an archive.

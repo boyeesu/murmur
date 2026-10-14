@@ -20,6 +20,10 @@ Literal user syntax:
 
 The join code is exactly 43 base64url characters. Start and join only request a
 human review. After approval, refresh activates the connection and retrieves
-bounded advisory context. Leave preserves the existing task and native chat.
+bounded advisory context. Later ordinary prompts and tool boundaries refresh only
+an already-active connection, without enrollment, polling or renewal. Tool
+feedback is advisory and never changes native permissions or rewrites tool input.
+Structured publication is unavailable until its native post-tool contract is verified.
+Leave preserves the existing task and native chat.
 Other hosts and already-open hot attachment are not verified. Native resume keeps
 the current UUID; fork and clear use new UUIDs and need their own approval.

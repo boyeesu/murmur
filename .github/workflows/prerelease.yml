@@ -1,0 +1,175 @@
+name: Prerelease candidate
+
+# Activation requires a reviewed commit: replace EVERY actions/* tag below with
+# independently verified full commit SHAs, then remove the literal false guard.
+# Configure environment "release" with required reviewers, prevent self-review,
+# and restrict deployment refs. No action SHAs have been verified offline.
+# Two dispatches on the SAME commit: (1) publish=false produces immutable assets
+# and a blocked template; (2) after external testing/review, publish=true takes
+# that run ID and the completed JSON attestation (never committed into its HEAD).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact prerelease tag matching both package manifests
+        required: true
+        type: string
+      publish:
+        description: Publish a previously tested candidate after protected approval
+        required: true
+        default: false
+        type: boolean
+      candidate_run:
+        description: Prior successful first-attempt dry-run ID (publish only)
+        required: false
+        type: string
+      readiness_json:
+        description: Externally reviewed readiness-template.json with all gates and evidence complete (publish only)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: murmur-prerelease
+  cancel-in-progress: false
+
+jobs:
+  activation:
+    if: ${{ false && github.repository == 'boyeesu/murmur' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Manually activated prerelease workflow'
+  verify:
+    if: ${{ !inputs.publish }}
+    needs: activation
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['24', '26']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+        env:
+          TMPDIR: ${{ runner.temp }}
+  package:
+    if: ${{ !inputs.publish }}
+    needs: [activation, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - name: Build and test the exact candidate, without approving gates
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          npm run pack
+          npm run sbom
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          const p = JSON.parse(fs.readFileSync('packages/murmur/package.json'));
+          const filename = p.name + '-' + p.version + '.tgz';
+          fs.writeFileSync('dist/' + filename + '.sha256', crypto.createHash('sha256').update(fs.readFileSync('dist/' + filename)).digest('hex') + '  ' + filename + '\n', { flag: 'wx' });
+          fs.appendFileSync(process.env.GITHUB_ENV, 'CANDIDATE_ARCHIVE=dist/' + filename + '\n');
+          JS
+          node scripts/release.mjs --tag "$RELEASE_TAG" --candidate-run "$GITHUB_RUN_ID" > dist/readiness-template.json
+      - name: Offline install the candidate bytes (no lifecycle scripts)
+        run: node scripts/verify-package.mjs "$CANDIDATE_ARCHIVE"
+        env:
+          TMPDIR: ${{ runner.temp }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: murmur-prerelease-assets
+          path: |
+            dist/*.tgz
+            dist/*.sha256
+            dist/*.cdx.json
+            dist/readiness-template.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+  source:
+    if: ${{ inputs.publish }}
+    needs: activation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact_id: ${{ steps.source.outputs.artifact_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify trusted repository, workflow, run HEAD and artifact before download
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node scripts/release.mjs --check-run "$CANDIDATE_RUN" --tag "$RELEASE_TAG" > "$RUNNER_TEMP/candidate-source.json"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const source = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/candidate-source.json'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'artifact_id=' + source.artifactId + '\n');
+          JS
+  publish:
+    if: ${{ inputs.publish }}
+    needs: [activation, source]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          repository: boyeesu/murmur
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run }}
+          artifact-ids: ${{ needs.source.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/candidate-assets
+      - name: Validate external attestation and publish the exact assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          READINESS_JSON: ${{ inputs.readiness_json }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const readiness = JSON.parse(process.env.READINESS_JSON);
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/release-readiness.json', JSON.stringify(readiness), { flag: 'wx', mode: 0o600 });
+          JS
+          node scripts/release.mjs --publish --tag "$RELEASE_TAG" --candidate-run "$CANDIDATE_RUN" --assets "$RUNNER_TEMP/candidate-assets" --readiness "$RUNNER_TEMP/release-readiness.json" --notes docs/release-notes.md

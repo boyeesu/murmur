@@ -5,6 +5,7 @@ import { assert, authorizeMutation, externalMutationPrincipal, canonicalJson, Mu
 import type { Mutation, Resource, Tool } from '../protocol/index.js';
 import { resourcesOverlap } from '../workspaces/identity.js';
 import { migrateSessions } from './session-migration.js';
+import { initializeMaintenanceSchema } from './maintenance-schema.js';
 import type { ProjectIdentity } from '../workspaces/identity.js';
 
 export type Project = { id: string; root: string; canonicalPath: string; mode: 'git' | 'advisory'; caseSensitive: number; createdAt: number };
@@ -29,7 +30,7 @@ export class CoordinationStore {
     try {
       this.db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 3000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
       const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-      assert(version <= 3, 'This database was created by a newer Murmur version.', 'SCHEMA_TOO_NEW');
+      assert(version <= 4, 'This database was created by a newer Murmur version; rollback is unsupported.', 'SCHEMA_TOO_NEW');
       if (version === 0) this.db.exec(`
         BEGIN IMMEDIATE;
         CREATE TABLE projects (
@@ -73,11 +74,19 @@ export class CoordinationStore {
       this.db.exec('CREATE TABLE IF NOT EXISTS murmur_project_bindings (projectId TEXT PRIMARY KEY REFERENCES projects(id), fingerprint TEXT NOT NULL)');
       const bindingColumns = this.db.prepare('PRAGMA table_info(murmur_project_bindings)').all().map(row => row.name);
       assert(bindingColumns.join(',') === 'projectId,fingerprint', 'Unsupported project identity binding schema.', 'SCHEMA_TOO_NEW');
+      initializeMaintenanceSchema(this.db);
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
+  private assertNotRetired(mutation: Mutation): void {
+    const retired = this.db.prepare('SELECT digest FROM mutation_tombstones WHERE caller=? AND key=?').get(mutation.caller, mutation.key);
+    if (!retired) return;
+    assert(retired.digest === digest(canonicalJson({ operation: mutation.operation, input: mutation.input })), 'Idempotency key was already used with different input.', 'IDEMPOTENCY_CONFLICT', 409);
+    throw new MurmurError('This request was completed and its response was retired. Inspect current state; this key will never execute again.', 'IDEMPOTENCY_RETIRED', 410);
+  }
   replay<T>(mutation: Mutation): { found: false } | { found: true; response: T } {
     authorizeMutation(mutation);
+    this.assertNotRetired(mutation);
     const cached = this.db.prepare('SELECT digest, response FROM mutations WHERE caller = ? AND key = ?').get(mutation.caller, mutation.key) as { digest: string; response: string } | undefined;
     if (!cached) return { found: false };
     const hash = digest(canonicalJson({ operation: mutation.operation, input: mutation.input }));
@@ -86,10 +95,12 @@ export class CoordinationStore {
   }
   mutate<T>(mutation: Mutation, operation: () => T): T {
     authorizeMutation(mutation);
+    this.assertNotRetired(mutation);
     const hash = digest(canonicalJson({ operation: mutation.operation, input: mutation.input }));
     this.db.exec('BEGIN IMMEDIATE');
     try {
       authorizeMutation(mutation);
+      this.assertNotRetired(mutation);
       const cached = this.db.prepare('SELECT digest, response FROM mutations WHERE caller = ? AND key = ?').get(mutation.caller, mutation.key) as { digest: string; response: string } | undefined;
       if (cached) {
         assert(cached.digest === hash, 'Idempotency key was already used with different input.', 'IDEMPOTENCY_CONFLICT', 409);
@@ -120,14 +131,26 @@ export class CoordinationStore {
     assert(row, 'Unknown task.', 'NOT_FOUND', 404);
     return row;
   }
-  authenticateSession(token: string): Session | undefined {
-    const session = this.db.prepare(`SELECT ${sessionColumns} FROM sessions WHERE tokenHash = ?`).get(digest(token)) as Session | undefined;
-    if (!session || session.credentialMode === 'manual') return session;
-    if (session.credentialMode !== 'managed') return undefined;
-    if (!this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='murmur_launches'").get()) return undefined;
+  /** Re-run after awaits and before replay/write using the hash captured at authentication. */
+  assertSessionCredential(sessionId: string, tokenHash: string): void {
+    assert(/^[a-f0-9]{64}$/.test(tokenHash), 'Session credential is no longer authorized.', 'SESSION_UNAUTHORIZED', 401);
+    const session = this.db.prepare(`SELECT ${sessionColumns} FROM sessions WHERE id=? AND tokenHash=?`).get(sessionId, tokenHash) as Session | undefined;
+    assert(session && !this.db.prepare('SELECT 1 FROM retired_session_credentials WHERE tokenHash=?').get(tokenHash), 'Session credential is no longer authorized.', 'SESSION_UNAUTHORIZED', 401);
+    if (session.credentialMode === 'manual') {
+      const credential = this.db.prepare('SELECT revokedAt FROM manual_credentials WHERE sessionId=?').get(session.id);
+      assert(credential?.revokedAt === null, 'Session credential is revoked or invalid.', 'SESSION_UNAUTHORIZED', 401);
+      return;
+    }
+    assert(session.credentialMode === 'managed' && this.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='murmur_launches'").get(), 'Session credential is no longer authorized.', 'SESSION_UNAUTHORIZED', 401);
     const managed = this.db.prepare('SELECT state, expiresAt FROM murmur_launches WHERE sessionId = ?').get(session.id);
-    if (!managed || !['claimed', 'running'].includes(String(managed.state)) || typeof managed.expiresAt !== 'number' || !Number.isSafeInteger(managed.expiresAt) || managed.expiresAt <= this.now()) return undefined;
-    return session;
+    assert(managed && ['claimed', 'running'].includes(String(managed.state)) && typeof managed.expiresAt === 'number' && Number.isSafeInteger(managed.expiresAt) && managed.expiresAt > this.now(), 'Managed session credential is no longer authorized.', 'SESSION_UNAUTHORIZED', 401);
+  }
+  authenticateSession(token: string): Session | undefined {
+    const tokenHash = digest(token);
+    const session = this.db.prepare(`SELECT ${sessionColumns} FROM sessions WHERE tokenHash = ?`).get(tokenHash) as Session | undefined;
+    if (!session) return undefined;
+    try { this.assertSessionCredential(session.id, tokenHash); return session; }
+    catch (error) { if (error instanceof MurmurError && error.code === 'SESSION_UNAUTHORIZED') return undefined; throw error; }
   }
   registerProject(identity: ProjectIdentity, mutation: Mutation): Project {
     assert(!externalMutationPrincipal(mutation), 'This operation is unavailable to external capabilities.', 'EXTERNAL_FORBIDDEN', 403);
@@ -166,6 +189,7 @@ export class CoordinationStore {
       const token = randomBytes(32).toString('base64url');
       const now = this.now();
       this.db.prepare('INSERT INTO sessions(id,projectId,tool,nativeId,instanceId,workspaceRoot,tokenHash,revision,createdAt,lastSeenAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, input.projectId, input.tool, input.nativeId, input.instanceId, input.workspaceRoot, digest(token), 1, now, now);
+      this.db.prepare('INSERT INTO manual_credentials VALUES (?,1,NULL,?)').run(id, now);
       this.event(input.projectId, 'session.registered', { id, tool: input.tool });
       return { session: this.session(id), token };
     });
@@ -189,6 +213,7 @@ export class CoordinationStore {
     const id = randomUUID(), now = this.now();
     this.db.prepare('INSERT INTO sessions(id,projectId,tool,nativeId,instanceId,workspaceRoot,tokenHash,revision,createdAt,lastSeenAt,credentialMode) VALUES (?,?,?,?,?,?,?,1,?,?,?)')
       .run(id, input.projectId, input.tool, input.nativeId, input.instanceId, input.workspaceRoot, input.tokenHash, now, now, input.credentialMode);
+    if (input.credentialMode === 'manual') this.db.prepare('INSERT INTO manual_credentials VALUES (?,1,NULL,?)').run(id, now);
     this.event(input.projectId, 'session.registered', { id, tool: input.tool, credentialMode: input.credentialMode });
     return this.session(id);
   }
@@ -258,6 +283,13 @@ export class CoordinationStore {
       tasks: this.db.prepare(`SELECT * FROM tasks${where} ORDER BY createdAt, id`).all(...args),
       reservations: this.db.prepare(`SELECT * FROM leases${where} ${where ? 'AND' : 'WHERE'} releasedAt IS NULL AND expiresAt > ? ORDER BY generation`).all(...args, this.now()).map(decodeLease),
     };
+  }
+  eventHistory(projectId: string, after: number): { requestedAfter: number; prunedThrough: number; prunedCount: number; prunedAt: number | null; historyPruned: boolean; contextRecords: { before: number | null; prunedCount: number; prunedAt: number | null } } {
+    this.project(projectId);
+    const row = this.db.prepare('SELECT prunedThrough,prunedCount,prunedAt FROM event_retention WHERE projectId=?').get(projectId);
+    const prunedThrough = Number(row?.prunedThrough ?? 0);
+    const context = this.db.prepare('SELECT before,prunedCount,prunedAt FROM context_retention WHERE projectId=?').get(projectId);
+    return { requestedAfter: after, prunedThrough, prunedCount: Number(row?.prunedCount ?? 0), prunedAt: row ? Number(row.prunedAt) : null, historyPruned: after < prunedThrough, contextRecords: { before: context ? Number(context.before) : null, prunedCount: Number(context?.prunedCount ?? 0), prunedAt: context ? Number(context.prunedAt) : null } };
   }
   events(projectId: string, after: number): CoordinationEvent[] {
     this.project(projectId);
