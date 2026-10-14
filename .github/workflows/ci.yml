@@ -22,8 +22,6 @@ jobs:
   runtime:
     name: Runtime / ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
-    env:
-      TMPDIR: ${{ runner.temp }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,3 +35,5 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+        env:
+          TMPDIR: ${{ runner.temp }}
