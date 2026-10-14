@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { assert, authorizeProject, authorizeSession, callerId, canonicalJson, integer, object, requireHuman, text } from '../protocol/index.js';
+import { assert, authorizeExternal, authorizeProject, authorizeSession, callerId, canonicalJson, integer, object, requireHuman, text, withAuthorization } from '../protocol/index.js';
 import type { Mutation, Principal } from '../protocol/index.js';
+import type { HandoffDraft } from '../protocol/external.js';
 import type { CoordinationStore, Task } from '../storage/store.js';
 
 export type Contract = { key: string; version: string; value?: string };
@@ -87,6 +88,10 @@ function paths(value: unknown, sensitive: boolean, name: string): string[] {
   });
   return [...new Set(result)].sort(order);
 }
+export type IntentDeclaration = Pick<Intent, 'acceptanceCriteria' | 'reads' | 'writes' | 'produces' | 'consumes' | 'dependencies'>;
+export function validateIntentDeclaration(input: Record<string, unknown>, sensitive: boolean): IntentDeclaration {
+  return { acceptanceCriteria: strings(input.acceptanceCriteria, 'acceptanceCriteria', 32, 512), reads: paths(input.reads, sensitive, 'reads'), writes: paths(input.writes, sensitive, 'writes'), produces: contracts(input.produces, 'produces'), consumes: contracts(input.consumes, 'consumes'), dependencies: strings(input.dependencies, 'dependencies', 32, 128).sort(order) };
+}
 function overlap(a: string, b: string): boolean {
   return a === '.' || b === '.' || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
@@ -166,6 +171,7 @@ export class CoordinationService {
     const task = this.store.task(taskId);
     this.actor(principal, task.projectId);
     authorizeSession(principal, task.ownerSessionId);
+    if (principal.kind === 'external') assert(taskId === principal.taskId, 'External authority is bound to exactly one task.', 'EXTERNAL_FORBIDDEN', 403);
     return task;
   }
   private meta(mutation: Mutation, principal: Principal, operation: string, input: unknown): Mutation {
@@ -173,7 +179,7 @@ export class CoordinationService {
     const key = plain(mutation.key, 'idempotency key', 200);
     assert(Buffer.byteLength(canonicalJson(input), 'utf8') <= 131072, 'Coordination payload exceeds 128 KiB.');
     // Bind replay identity to this method and its validated payload, never caller-supplied operation/input metadata.
-    return { key, caller: callerId(principal), operation: `coordination.${operation}`, input };
+    return withAuthorization(principal, { key, caller: callerId(principal), operation: `coordination.${operation}`, input });
   }
   private live(task: Task): void {
     assert(active.has(task.status), 'Terminal tasks cannot be changed or reopened.', 'INVALID_TASK_STATE', 409);
@@ -185,7 +191,7 @@ export class CoordinationService {
     for (const row of rows) this.store.event(task.projectId, 'reservation.released', { ...this.store.lease(row.id), reason });
   }
   updateTask(raw: unknown, principal: Principal, mutation: Mutation): Task {
-    const input = fields(raw, ['taskId', 'revision', 'title', 'status', 'handoffSessionId']);
+    const input = fields(raw, ['taskId', 'revision', 'title', 'status', 'handoffSessionId', 'blocker']);
     const taskId = identifier(input.taskId, 'taskId');
     const revision = integer(input.revision, 'revision', 1, Number.MAX_SAFE_INTEGER - 1);
     const title = own(input, 'title') ? plain(input.title, 'title', 512) : undefined;
@@ -193,9 +199,12 @@ export class CoordinationService {
     assert(status === undefined || active.has(status) || status === 'abandoned', 'Unsupported task status; integration is a separate operation.');
     const handoffSessionId = own(input, 'handoffSessionId') ? identifier(input.handoffSessionId, 'handoffSessionId') : undefined;
     assert(title !== undefined || status !== undefined || handoffSessionId !== undefined, 'At least one task change is required.');
+    const blocker = own(input, 'blocker') ? input.blocker === null ? null : plain(input.blocker, 'blocker', 2048) : undefined;
+    assert(blocker === undefined || this.store.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_blocker_notes'").get(), 'Group note schema is not initialized.');
+    if (principal.kind === 'external') assert(title === undefined && handoffSessionId === undefined && status !== 'abandoned' && status !== 'planned', 'External grants cannot rename, hand off, or abandon tasks.', 'EXTERNAL_FORBIDDEN', 403);
     if (handoffSessionId !== undefined) requireHuman(principal);
     this.owned(taskId, principal); // Always authorize before mutate can expose a cached response.
-    return this.store.mutate(this.meta(mutation, principal, 'task.update', { taskId, revision, title, status, handoffSessionId }), () => {
+    return this.store.mutate(this.meta(mutation, principal, 'task.update', { taskId, revision, title, status, handoffSessionId, blocker }), () => {
       const task = this.owned(taskId, principal);
       assert(task.revision === revision, 'Task revision is stale.', 'STALE_REVISION', 409);
       this.live(task);
@@ -218,6 +227,7 @@ export class CoordinationService {
         .run(title ?? task.title, nextStatus, handoffSessionId ?? task.ownerSessionId, taskId, revision);
       assert(Number(changed.changes) === 1, 'Task revision is stale.', 'STALE_REVISION', 409);
       const updated = { ...this.store.task(taskId) };
+      if (blocker !== undefined) this.store.db.prepare('INSERT INTO task_blocker_notes VALUES (?,?,?,?,?) ON CONFLICT(taskId) DO UPDATE SET taskRevision=excluded.taskRevision,blocker=excluded.blocker,updatedBy=excluded.updatedBy,updatedAt=excluded.updatedAt').run(taskId, updated.revision, blocker, callerId(principal), this.store.now());
       this.store.event(task.projectId, handoffSessionId === undefined ? 'task.updated' : 'task.handed_off', { id: taskId, revision: updated.revision, status: updated.status, ownerSessionId: updated.ownerSessionId });
       return updated;
     });
@@ -235,13 +245,13 @@ export class CoordinationService {
     const revision = integer(input.revision, 'revision', 1, Number.MAX_SAFE_INTEGER - 1);
     const before = this.owned(taskId, principal);
     const sensitive = Boolean(this.store.project(before.projectId).caseSensitive);
-    const declaration = {
-      acceptanceCriteria: strings(input.acceptanceCriteria, 'acceptanceCriteria', 32, 512),
-      reads: paths(input.reads, sensitive, 'reads'), writes: paths(input.writes, sensitive, 'writes'),
-      produces: contracts(input.produces, 'produces'), consumes: contracts(input.consumes, 'consumes'),
-      dependencies: strings(input.dependencies, 'dependencies', 32, 128).sort(order),
-    };
+    const declaration = validateIntentDeclaration(input, sensitive);
     return this.store.mutate(this.meta(mutation, principal, 'intent.declare', { taskId, revision, ...declaration }), () => {
+      return this.declareIntentRow(taskId, revision, declaration, principal);
+    });
+  }
+  /** Transaction-local declaration; same ownership, revisions, and cycle checks as public intent mutation. */
+  declareIntentRow(taskId: string, revision: number, declaration: IntentDeclaration, principal: Principal): { task: Task; intent: Intent } {
       const task = this.owned(taskId, principal);
       assert(task.revision === revision, 'Task revision is stale.', 'STALE_REVISION', 409);
       this.live(task);
@@ -276,7 +286,6 @@ export class CoordinationService {
       const updated = { ...this.store.task(taskId) }, intent = this.intent(updated)!;
       this.store.event(task.projectId, 'intent.declared', { id: intent.id, taskId, revision: intent.revision, taskRevision: updated.revision });
       return { task: updated, intent };
-    });
   }
   private decision(id: string): Decision {
     const row = this.store.db.prepare('SELECT * FROM coordination_decisions WHERE id = ?').get(id) as Decision | undefined;
@@ -297,19 +306,46 @@ export class CoordinationService {
       version: plain(input.version, 'decision version', 64), rationale: plain(input.rationale, 'rationale', 2048),
       taskId: input.taskId === undefined || input.taskId === null ? null : identifier(input.taskId, 'taskId'),
     };
+    if (principal.kind === 'external') assert(proposal.taskId === principal.taskId, 'External proposals must name the bound task.', 'EXTERNAL_FORBIDDEN', 403);
     if (proposal.taskId) assert(this.owned(proposal.taskId, principal).projectId === projectId, 'Decision task belongs to another project.', 'FORBIDDEN', 403);
     return this.store.mutate(this.meta(mutation, principal, 'decision.propose', proposal), () => {
       this.actor(principal, projectId);
       this.store.project(projectId);
       if (proposal.taskId) assert(this.owned(proposal.taskId, principal).projectId === projectId, 'Decision task belongs to another project.', 'FORBIDDEN', 403);
-      const id = randomUUID();
-      this.store.db.prepare(`INSERT INTO coordination_decisions
-        (id, projectId, key, value, version, rationale, taskId, status, revision, proposedBy, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', 1, ?, ?)`)
-        .run(id, projectId, proposal.key, proposal.value, proposal.version, proposal.rationale, proposal.taskId, callerId(principal), this.store.now());
-      this.store.event(projectId, 'decision.proposed', { id, key: proposal.key, revision: 1 });
-      return this.decision(id);
+      return this.proposeDecisionRow(proposal, callerId(principal));
     });
+  }
+  /** Transaction-local proposal write; callers must validate and authorize first. */
+  proposeDecisionRow(proposal: { projectId: string; key: string; value: string; version: string; rationale: string; taskId: string | null }, actor: string): Decision {
+    const id = randomUUID();
+    this.store.db.prepare(`INSERT INTO coordination_decisions
+      (id,projectId,key,value,version,rationale,taskId,status,revision,proposedBy,createdAt)
+      VALUES (?,?,?,?,?,?,?,'proposed',1,?,?)`).run(id, proposal.projectId, proposal.key, proposal.value, proposal.version, proposal.rationale, proposal.taskId, actor, this.store.now());
+    this.store.event(proposal.projectId, 'decision.proposed', { id, key: proposal.key, revision: 1 });
+    return this.decision(id);
+  }
+  publishReviewedHandoffRow(taskId: string, handoff: HandoffDraft, actor: string, provenance: (type: string, entityId: string) => void): void {
+    let task = this.store.task(taskId);
+    const intentKeys = ['acceptanceCriteria','reads','writes','produces','consumes','dependencies'] as const;
+    if (intentKeys.some(key => own(handoff, key))) {
+      const previous = this.intent(task);
+      const merged = Object.fromEntries(intentKeys.map(key => [key, handoff[key] ?? previous?.[key] ?? []]));
+      const declaration = validateIntentDeclaration(merged, Boolean(this.store.project(task.projectId).caseSensitive));
+      const updated = this.declareIntentRow(taskId, task.revision, declaration, { kind: 'human' });
+      task = updated.task;
+      provenance('intent', updated.intent.id);
+    }
+    if (handoff.blocker !== undefined) {
+      const blocker = handoff.blocker === null ? null : plain(handoff.blocker, 'blocker', 2048);
+      this.store.db.prepare('UPDATE tasks SET revision=revision+1 WHERE id=? AND revision=?').run(taskId, task.revision);
+      task = this.store.task(taskId);
+      this.store.db.prepare('INSERT INTO task_blocker_notes VALUES (?,?,?,?,?) ON CONFLICT(taskId) DO UPDATE SET taskRevision=excluded.taskRevision,blocker=excluded.blocker,updatedBy=excluded.updatedBy,updatedAt=excluded.updatedAt').run(taskId, task.revision, blocker, actor, this.store.now());
+      provenance('blocker', taskId);
+    }
+    for (const item of handoff.decisions ?? []) {
+      const proposal = { projectId: task.projectId, taskId, key: contractKey(item.key), value: plain(item.value, 'decision value', 2048), version: plain(item.version, 'decision version', 64), rationale: plain(item.rationale, 'rationale', 2048) };
+      provenance('decision', this.proposeDecisionRow(proposal, actor).id);
+    }
   }
   acceptDecision(raw: unknown, principal: Principal, mutation: Mutation): Decision {
     requireHuman(principal);
@@ -435,6 +471,7 @@ export class CoordinationService {
     return { candidate, alerts: this.alertsFor(projectId, this.subjects(projectId), this.accepted(projectId), subject), advisory: true };
   }
   dismissAlert(raw: unknown, principal: Principal, mutation: Mutation): { projectId: string; alertId: string; dismissed: true } {
+    assert(principal.kind !== 'external', 'External grants cannot dismiss project alerts.', 'EXTERNAL_FORBIDDEN', 403);
     const input = fields(raw, ['projectId', 'alertId']);
     const projectId = identifier(input.projectId, 'projectId'), alertId = identifier(input.alertId, 'alertId');
     this.actor(principal, projectId);
@@ -459,31 +496,52 @@ export class CoordinationService {
       return { projectId, alertId, dismissed: true as const };
     });
   }
-  context(projectId: string, taskId?: string, after = 0) {
+  context(projectId: string, taskId?: string, after = 0, principal?: Principal) {
+    if (principal) {
+      authorizeProject(principal, projectId);
+      if (principal.kind === 'external') assert(taskId === principal.taskId, 'External context requires its bound task.', 'EXTERNAL_FORBIDDEN', 403);
+    }
     this.store.project(identifier(projectId, 'projectId'));
     if (taskId !== undefined) identifier(taskId, 'taskId');
     integer(after, 'after', 0, Number.MAX_SAFE_INTEGER);
     const db = this.store.db;
     db.exec('BEGIN');
     try {
+      if (principal) authorizeExternal(principal);
       const focus = taskId === undefined ? null : this.store.task(taskId);
       assert(!focus || focus.projectId === projectId, 'Context task belongs to another project.', 'FORBIDDEN', 403);
       const focusIntent = focus ? this.intent(focus) : null;
       const allAlerts = this.getAlerts(projectId).filter(alert => !taskId || alert.taskIds.includes(taskId));
       const important = new Set([...(focusIntent?.dependencies ?? []), ...allAlerts.flatMap(alert => alert.taskIds)]);
+      const groupsEnabled = !!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='group_members'").get();
+      const focusMemberships = groupsEnabled && taskId ? db.prepare('SELECT m.id,m.groupId,m.revision,m.state,g.revision AS groupRevision,g.state AS groupState FROM group_members m JOIN work_groups g ON g.id=m.groupId WHERE m.taskId=? ORDER BY m.id').all(taskId) : [];
+      const membershipRows = groupsEnabled && taskId ? db.prepare("SELECT m.id,m.groupId,m.taskId,m.responsibility,m.summary,m.handoff,m.revision,m.state,g.revision AS groupRevision FROM group_members m JOIN work_groups g ON g.id=m.groupId WHERE g.state='active' AND m.groupId IN (SELECT groupId FROM group_members WHERE taskId=? AND state='active') ORDER BY m.createdAt,m.id").all(taskId) : [];
+      const linked = new Set(membershipRows.filter(row => row.state === 'active').map(row => row.taskId));
+      const membershipRevision = hash({ focusMemberships, membershipRows });
+      let membershipDetailsTruncated = false;
+      const memberships = membershipRows.filter(row => row.state === 'active').slice(0, 24).map(row => {
+        const handoff = row.handoff ? JSON.parse(row.handoff as string) as HandoffDraft : null;
+        const reportedChangedFiles = (handoff?.changedFiles ?? []).slice(0, 8).map(value => value.slice(0, 256));
+        const remainingWork = (handoff?.remainingWork ?? []).slice(0, 4).map(value => value.slice(0, 256));
+        if ((handoff?.changedFiles?.length ?? 0) > reportedChangedFiles.length || (handoff?.remainingWork?.length ?? 0) > remainingWork.length || handoff?.changedFiles?.some(value => value.length > 256) || handoff?.remainingWork?.some(value => value.length > 256)) membershipDetailsTruncated = true;
+        return { id: String(row.id), groupId: String(row.groupId), taskId: String(row.taskId), revision: Number(row.revision), groupRevision: Number(row.groupRevision), responsibility: String(row.responsibility).slice(0, 512), summary: String(row.summary).slice(0, 512), reportedChangedFiles, remainingWork };
+      });
+      const activeGroup = focusMemberships.find(row => row.state === 'active' && row.groupState === 'active');
+      const group = activeGroup ? db.prepare('SELECT id,title,goal,revision FROM work_groups WHERE id=?').get(activeGroup.groupId as string) ?? null : null;
       const allTasks = db.prepare('SELECT * FROM tasks WHERE projectId = ? ORDER BY createdAt, id').all(projectId) as Task[];
       allTasks.sort((a, b) => {
-        const rank = (task: Task) => task.id === taskId ? 0 : important.has(task.id) ? 1 : active.has(task.status) ? 2 : 3;
+        const rank = (task: Task) => task.id === taskId ? 0 : important.has(task.id) ? 1 : linked.has(task.id) ? 2 : active.has(task.status) ? 3 : 4;
         return rank(a) - rank(b) || a.createdAt - b.createdAt || order(a.id, b.id);
       });
       let taskDetailsTruncated = false;
       const tasks = allTasks.slice(0, 24).map(task => {
         const intent = this.intent(task);
-        if (!intent) return { ...task, intent: null };
+        const blocker = groupsEnabled ? db.prepare('SELECT blocker,taskRevision,updatedAt FROM task_blocker_notes WHERE taskId=?').get(task.id) ?? null : null;
+        if (!intent) return { ...task, blocker, intent: null };
         const clipped = { ...intent, acceptanceCriteria: intent.acceptanceCriteria.slice(0, 8), reads: intent.reads.slice(0, 12), writes: intent.writes.slice(0, 12),
           produces: intent.produces.slice(0, 12), consumes: intent.consumes.slice(0, 12), dependencies: intent.dependencies.slice(0, 12) };
         for (const key of ['acceptanceCriteria', 'reads', 'writes', 'produces', 'consumes', 'dependencies'] as const) if (clipped[key].length < intent[key].length) taskDetailsTruncated = true;
-        return { ...task, intent: clipped };
+        return { ...task, blocker, intent: clipped };
       });
       const keys = new Set([...(focusIntent?.produces ?? []), ...(focusIntent?.consumes ?? [])].map(contract => contract.key));
       const allDecisions = this.accepted(projectId).sort((a, b) => Number(keys.has(b.key)) - Number(keys.has(a.key)) || order(a.key, b.key));
@@ -496,8 +554,10 @@ export class CoordinationService {
       const taskLines: string[] = [];
       for (const task of tasks) {
         taskLines.push(`Task ${task.id} r${task.revision} [${task.status}]: ${JSON.stringify(task.title)}`);
+        if (task.blocker?.blocker) taskLines.push(`  Latest blocker (task r${task.blocker.taskRevision}): ${JSON.stringify(task.blocker.blocker)}`);
         if (task.intent) taskLines.push(`  Writes: ${JSON.stringify(task.intent.writes)}; produces: ${JSON.stringify(task.intent.produces.map(item => `${item.key}@${item.version}`))}; consumes: ${JSON.stringify(task.intent.consumes.map(item => `${item.key}@${item.version}`))}`);
       }
+      const groupLines = group ? [`Group ${group.id} r${group.revision}: ${JSON.stringify(group.title)}; goal: ${JSON.stringify(String(group.goal).slice(0, 512))}`, ...memberships.map(member => `Linked task ${member.taskId}: ${JSON.stringify(member.responsibility)}; reviewed summary: ${JSON.stringify(member.summary)}; reported prior paths (not filesystem attribution): ${JSON.stringify(member.reportedChangedFiles)}; remaining work: ${JSON.stringify(member.remainingWork)}`)] : [];
       const decisionLines = decisions.map(decision => `Accepted ${JSON.stringify(decision.key)}@${JSON.stringify(decision.version)} r${decision.revision}: ${JSON.stringify(decision.value)}`);
       const alertLines = alerts.map(alert => `Alert ${alert.id} [${alert.severity}/${alert.kind}]: ${alert.message} Action: ${alert.suggestedAction}`);
       let briefingTruncated = false;
@@ -508,15 +568,15 @@ export class CoordinationService {
         return `${content.slice(0, budget - 68)}\n[Section truncated; consult structured fields or targeted context.]`;
       };
       // Separate section budgets ensure a large task list cannot erase all decisions or alerts.
-      const briefing = [header, section('Tasks', taskLines, 2200), section('Accepted decisions', decisionLines, 1700), section('Alerts', alertLines, 1500)].join('\n\n');
+      const briefing = [header, section('Tasks', taskLines, group ? 1600 : 2200), ...(group ? [section('Linked group (reviewed)', groupLines, 600)] : []), section('Accepted decisions', decisionLines, 1700), section('Alerts', alertLines, 1500)].join('\n\n');
       const generatedAt = this.store.now(), id = randomUUID();
       db.prepare('INSERT INTO coordination_context_deliveries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(id, projectId, taskId ?? null, after, nextCursor, events.length,
-          JSON.stringify(tasks.map(task => ({ id: task.id, revision: task.revision, intentRevision: task.intent?.revision ?? null }))),
+          JSON.stringify(tasks.map(task => ({ id: task.id, revision: task.revision, intentRevision: task.intent?.revision ?? null, membershipRevision }))),
           JSON.stringify(decisions.map(decision => ({ id: decision.id, revision: decision.revision }))), JSON.stringify(alerts.map(alert => alert.id)), generatedAt);
       db.exec('COMMIT');
-      return { projectId, task: taskId ? tasks.find(task => task.id === taskId) ?? null : null, tasks, decisions, alerts, briefing, events, nextCursor,
-        truncated: { tasks: allTasks.length > tasks.length, taskDetails: taskDetailsTruncated, decisions: allDecisions.length > decisions.length, alerts: allAlerts.length > alerts.length, events: page.length > events.length, briefing: briefingTruncated },
+      return { projectId, membershipRevision, memberships, group, task: taskId ? tasks.find(task => task.id === taskId) ?? null : null, tasks, decisions, alerts, briefing, events, nextCursor,
+        truncated: { membershipDetails: membershipDetailsTruncated, memberships: membershipRows.filter(row => row.state === 'active').length > memberships.length, tasks: allTasks.length > tasks.length, taskDetails: taskDetailsTruncated, decisions: allDecisions.length > decisions.length, alerts: allAlerts.length > alerts.length, events: page.length > events.length, briefing: briefingTruncated },
         delivery: { id, generatedAt, after, nextCursor, eventCount: events.length, meaning: 'generated_context_event_metadata_only' as const } };
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }

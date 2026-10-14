@@ -2,13 +2,47 @@
 
 Environment: macOS, Node 26.4.0, npm 11.17.0, Git 2.54.0.
 
-The sections below record local verification before GitHub publication. For
-current remote runtime results, see [GitHub Actions](https://github.com/boyeesu/murmur/actions/workflows/ci.yml).
+The sections below record dated local checkpoints; older failures and test totals
+are retained as history, not current capability claims. For current remote runtime
+results, see [GitHub Actions](https://github.com/boyeesu/murmur/actions/workflows/ci.yml).
 
-## Automated results
+## Claude connector — 0.5 checkpoint (2026-10-14)
 
-The latest consolidated `npm run check` passes strict TypeScript checking and **236 tests, 0 failures**. This is a
-recorded local run, not a substitute for rerunning after changes.
+Actual **Claude Code 2.1.247** passed the explicit native lifecycle experiment and
+the **exported production-plugin** test in `scripts/probe-claude-connector.mjs`.
+The native fixed `UserPromptSubmit` hook carried raw namespaced command text and
+current UUID/cwd. Ordinary resume retained the UUID, fork created a new UUID, and
+clear emitted a reset plus a new UUID.
+
+With native-authored disposable history and the real fixture daemon, production
+start requested human approval; authenticated review/approval and native resumed
+refresh retained scoped access. Two same-cwd chats had distinct task owners. Fork
+and clear reported disconnected instead of inheriting the parent grant; explicit
+original resume still worked. Leave revoked only its own grant, preserving tasks
+and the other chat's grant.
+
+These are **headless native CLI checks, not a real-user chat or model trial**. They
+used empty disposable HOME/config, a dummy key, and an owned static loopback API
+responder with no actual LLM inference. No global native installation occurred.
+The earlier denied nested OS-sandbox attempt remains in the historical record.
+Later explicitly selected `--lifecycle` runs used the existing outer environment
+with isolated config/local dummy transport; no stronger OS isolation or absence
+of Keychain access was proved.
+
+Only the Claude 2.1.247 explicit plugin + same-chat resume flow is enabled. Direct
+hot attachment/reload into an already-open CLI, other hosts/Claude versions, generic
+native MCP attachment, and automatic background publication remain unverified/gated.
+Refresh is command-driven, not proof of model obedience. The original conversation
+history remains native; Murmur does not scan/import it. The 0.4 API/groups/reviewed
+handoff features remain intact. See [the full native evidence and history](verification-existing-chats.md).
+
+**Final 0.5 check/package acceptance:** pending the final consolidated run and local
+packaging checkpoint. No aggregate test count or package publication is asserted yet.
+
+## Historical consolidated automated results — 0.3 (2026-10-13)
+
+At this checkpoint, `npm run check` passed strict TypeScript checking and **236 tests,
+0 failures**. This is a recorded local run, not a substitute for rerunning after changes.
 
 Verified with real SQLite, HTTP, child CLI processes and disposable Git repos:
 
@@ -60,7 +94,7 @@ it was corrected to unwrap `inspection.job` while preserving bounded inspection
 metadata. Mobile navigation labels and compact project labels were also polished.
 The local preview used disposable fixture state and was stopped after verification.
 
-## Blocked release gates
+## Historical blocked release gates — before 0.3
 
 - Static type checking: `tsc` is not installed. Offline install failed because
   dependencies were uncached; an explicitly authorized download still received
@@ -175,3 +209,72 @@ hook event. No model input was sent, normal guards/permissions remained intact,
 and all owned processes/configs/fixture state were cleaned. Model consumption was
 not tested. The production redactor and binding checks were not weakened to make
 this pass; only the probe's impossible raw-UUID expectation was corrected.
+
+## Historical 0.4 session linking verification (2026-10-14)
+
+This checkpoint predates the 0.5 native connector work recorded at the top. Its
+native-disabled conclusions and package/test evidence are retained as history.
+
+Version 0.4.0 passes strict TypeScript checking and **346 runtime, SDK, HTTP,
+UI-component, helper, migration and package tests** on Node 26.4.0/macOS. The
+complete suite was rerun after review fixes and the browser correction. Node 24
+and Linux CI, and real model-driven native adoption, were not run.
+
+Independent review verified fixes for legacy human-credential fallback under
+external environment markers, late polling of an already approved request, and
+fresh enrollment after early revocation. Shared guards reject complete/partial
+external markers before discovery. Ambiguous helper failures preserve proofs;
+new enrollment requires fresh proofs and human approval. This is not a
+comprehensive security audit.
+
+Browser verification used a synthetic disposable project, not native chats:
+
+- Authenticated inspection showed the exact workspace and shared-checkout warning.
+- Expired requests blocked approval while preserving edited fields.
+- Approval published reviewed content and created a separately owned task in the group.
+- A scoped fixture client read both task summaries without another task's authority.
+- Export preserved immutable source pins and edited summary, reported changed files and remaining work.
+- Browser revocation produced HTTP 401 for the old capability while preserving task status, owner, feature claim and uncommitted file.
+- Desktop inspection and a 375px mobile viewport showed no document-wide horizontal overflow.
+- A stray null in the inspection panel was corrected; UI and full-suite checks passed afterward.
+
+The preview initially opened localhost, which the exact Host guard correctly
+refused. Verification used 127.0.0.1. A fixture-only entry server minted normal
+one-use login tickets at navigation time to avoid tool delays; production
+authentication and lifetimes were unchanged. No browser credential entered a
+native connector.
+
+Offline package installation verified 95 runtime dependency locations/licenses,
+new CLI entrypoints, review-only native assets, and rejection of native actions.
+No global native settings were installed.
+
+**The complete existing-chat adoption checklist is not yet done.** Groups,
+human-approved external protocol, reviewed handoffs and replacement launch are
+implemented. Native in-place activation, authenticated current-action identity,
+and safe native resume/fork/clear remain unverified, so native actions stay
+disabled. See [native probe evidence](verification-existing-chats.md) and
+[session linking](session-linking.md).
+
+### Final 0.5 acceptance results
+
+The final strict check and complete runtime suite pass: **368 tests, zero failures**
+on Node 26.4.0/macOS. The exported production-plugin test was rerun after the
+recovery fixes and passed all native start/approval, resumed refresh, two-chat
+ownership, fork/clear separation, original-session resume and leave checks.
+It used actual Claude Code 2.1.247 with native-authored disposable history and an
+owned static local responder, not real model inference or real-user histories.
+
+Native review findings were fixed and regression-tested:
+
+- Encoded-byte section budgets keep accepted decisions and alerts represented
+  even when preceding task/group text is multibyte and oversized.
+- Failed hook input pipes are destroyed with late-error handling.
+- A dedicated, credential-free SQLite mutex releases its process-owned lock on
+  normal exit or SIGKILL. Tests cover child/process contention, initialization,
+  private-mode/symlink/inode checks, and preserved proofs after crash recovery.
+  Legacy regular-file markers are refused, not guessed stale or deleted.
+
+The dashboard's adapter API was checked through the preview: Claude reports the
+version-scoped explicit-resume connector; the other native hosts remain gated,
+and configured/connected state stays unknown rather than inferred from a binary.
+No global native installation, live-user chat connection, commit or push occurred.

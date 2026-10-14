@@ -33,7 +33,7 @@ export function managedEnvironmentPresent(env: NodeJS.ProcessEnv = process.env):
   return Object.keys(env).some(key => key.startsWith('MURMUR_AGENT_'));
 }
 export function requireHumanEnvironment(env: NodeJS.ProcessEnv = process.env): void {
-  assert(!managedEnvironmentPresent(env), 'Human commands are unavailable in a managed agent session. Use murmur agent commands.', 'HUMAN_COMMAND_FORBIDDEN', 403);
+  assert(!managedEnvironmentPresent(env) && !Object.keys(env).some(key => key.startsWith('MURMUR_EXTERNAL_')), 'Human commands are unavailable in a scoped agent session. Use the configured agent or external commands.', 'HUMAN_COMMAND_FORBIDDEN', 403);
 }
 function origin(value: unknown): string {
   const source = text(value, 'origin', 128);
@@ -63,6 +63,7 @@ export function validateAgentConnection(value: unknown): AgentConnection {
   return { protocolVersion: PROTOCOL_VERSION, origin: origin(input.origin), stateId, launchId: id(input.launchId,'launchId'), projectId: id(input.projectId,'projectId'), sessionId: id(input.sessionId,'sessionId'), taskId: id(input.taskId,'taskId'), agentToken: token(input.agentToken) };
 }
 export function readAgentConnection(env: NodeJS.ProcessEnv = process.env): AgentConnection {
+  assert(!Object.keys(env).some(key => key.startsWith('MURMUR_EXTERNAL_')), 'Mixed managed and external connection markers are not supported.', 'AGENT_CONFIGURATION');
   assert(env[AGENT_MODE_ENV] === '1' && typeof env[AGENT_CONNECTION_ENV] === 'string' && env[AGENT_CONNECTION_ENV]!.length <= 8192, 'A complete managed agent connection is required.', 'AGENT_CONFIGURATION');
   let value: unknown;
   try { value = JSON.parse(env[AGENT_CONNECTION_ENV]!); } catch { assert(false, 'Invalid managed connection JSON.', 'AGENT_CONFIGURATION'); }

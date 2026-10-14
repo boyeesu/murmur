@@ -2,8 +2,45 @@ export const PROTOCOL_VERSION = 1;
 export const TOOLS = ['claude', 'codex', 'cursor', 'opencode', 'manual'] as const;
 export type Tool = typeof TOOLS[number];
 export type Resource = { kind: 'path' | 'resource'; value: string };
-export type Principal = { kind: 'human' } | { kind: 'session'; sessionId: string; projectId: string };
-export type Mutation = { key: string; caller: string; operation: string; input: unknown };
+export type ExternalPrincipal = Readonly<{ kind: 'external'; grantId: string; projectId: string; sessionId: string; taskId: string; memberId: string; groupId: string; workspaceRoot: string; expiresAt: number }>;
+export type Principal = { kind: 'human' } | { kind: 'session'; sessionId: string; projectId: string } | ExternalPrincipal;
+/** Authority is attached by server code, never deserialized from JSON or persisted. */
+declare const authorizationBrand: unique symbol;
+export type MutationAuthorization = { readonly [authorizationBrand]: true };
+export type Mutation = { key: string; caller: string; operation: string; input: unknown; authorization?: MutationAuthorization };
+const principalGuards = new WeakMap<object, () => void>();
+const mutationGuards = new WeakMap<object, { caller: string; check: () => void; principal: ExternalPrincipal }>();
+export function authenticatedExternalPrincipal(binding: ExternalPrincipal, check: () => void): ExternalPrincipal {
+  const principal = Object.freeze({ ...binding });
+  principalGuards.set(principal, check);
+  return principal;
+}
+export function authorizeExternal(principal: Principal): void {
+  if (principal.kind !== 'external') return;
+  const check = principalGuards.get(principal);
+  assert(check, 'External authority must come from authenticated server capability.', 'EXTERNAL_UNAUTHORIZED', 401);
+  check();
+}
+export function withAuthorization(principal: Principal, mutation: Mutation): Mutation {
+  if (principal.kind !== 'external') return mutation;
+  authorizeExternal(principal);
+  assert(mutation.caller === callerId(principal), 'Mutation caller does not match external authority.', 'EXTERNAL_FORBIDDEN', 403);
+  const authorization = Object.freeze({}) as MutationAuthorization;
+  mutationGuards.set(authorization, { caller: mutation.caller, check: principalGuards.get(principal)!, principal });
+  return { ...mutation, authorization };
+}
+export function authorizeMutation(mutation: Mutation): void {
+  const entry = mutation.authorization && mutationGuards.get(mutation.authorization);
+  if (mutation.caller.startsWith('external:') || mutation.authorization !== undefined) {
+    assert(entry && entry.caller === mutation.caller, 'External mutations require trusted current authorization.', 'EXTERNAL_UNAUTHORIZED', 401);
+    entry.check();
+  }
+}
+
+export function externalMutationPrincipal(mutation: Mutation): ExternalPrincipal | undefined {
+  authorizeMutation(mutation);
+  return mutation.authorization ? mutationGuards.get(mutation.authorization)?.principal : undefined;
+}
 
 export class MurmurError extends Error {
   code: string;
@@ -35,12 +72,14 @@ export function integer(value: unknown, name: string, minimum: number, maximum: 
   return value as number;
 }
 export function callerId(principal: Principal): string {
-  return principal.kind === 'human' ? 'human' : `session:${principal.sessionId}`;
+  return principal.kind === 'human' ? 'human' : principal.kind === 'external' ? `external:${principal.grantId}:${principal.sessionId}` : `session:${principal.sessionId}`;
 }
 export function authorizeProject(principal: Principal, projectId: string): void {
+  authorizeExternal(principal);
   assert(principal.kind === 'human' || principal.projectId === projectId, 'This credential belongs to another project.', 'FORBIDDEN', 403);
 }
 export function authorizeSession(principal: Principal, sessionId: string): void {
+  authorizeExternal(principal);
   assert(principal.kind === 'human' || principal.sessionId === sessionId, 'This credential belongs to another session.', 'FORBIDDEN', 403);
 }
 export function requireHuman(principal: Principal): void {

@@ -264,7 +264,9 @@ function snapshot(value: unknown, connection: AgentConnection, after: number): {
   }
   // A cursor can advance only over the event page actually received.
   check(cursor === sequence);
-  const fingerprint = hash(JSON.stringify({ briefing, revision, tasks: tasks.map(item => [ids([item])[0], item.intent == null ? null : integer(record(item.intent).revision, 1)]),
+  const membershipRevision = core.membershipRevision;
+  check(membershipRevision === undefined || typeof membershipRevision === 'string' && /^[a-f0-9]{64}$/.test(membershipRevision));
+  const fingerprint = hash(JSON.stringify({ briefing, revision, ...(membershipRevision === undefined ? {} : { membershipRevision }), tasks: tasks.map(item => [ids([item])[0], item.intent == null ? null : integer(record(item.intent).revision, 1)]),
     decisions: ids(decisions), alerts: alerts.map(item => boundedString(item.id, 128)),
     truncated: ['tasks', 'taskDetails', 'decisions', 'alerts', 'briefing'].map(name => truncated[name] === true) }));
   return { briefing, fingerprint, cursor, updates, decisions: decisions.length, revision, incomplete: truncated.events };

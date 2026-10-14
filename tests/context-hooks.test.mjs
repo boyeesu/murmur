@@ -486,3 +486,14 @@ test('long punctuation-bearing strings remain bounded during credential redactio
   advisory(await f.invoke({ context: () => core({ briefing: 'a-'.repeat(16000) }) }));
   assert(Date.now() - start < 1000);
 });
+
+test('group membership fingerprints invalidate unchanged clipped context without widening hook authority', async t => {
+  const f = await fixture(t);
+  const first = () => core({ membershipRevision: 'a'.repeat(64) });
+  advisory(await f.invoke({ context: first }));
+  assert.deepEqual((await f.invoke({ context: first })).value, {});
+  advisory(await f.invoke({ context: () => core({ membershipRevision: 'b'.repeat(64) }) }));
+  const invalid = await f.invoke({ context: () => core({ membershipRevision: 'not-a-valid-fingerprint' }) });
+  assert.match(contextText(invalid), /unavailable/i);
+  assert(!invalid.text.includes('not-a-valid-fingerprint'));
+});

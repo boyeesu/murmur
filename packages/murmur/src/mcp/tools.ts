@@ -21,7 +21,7 @@ const resource = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('resource'), value: plain(1024).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/) }),
 ]);
 
-type MutationMethod = 'intent' | 'update' | 'checkPlan' | 'proposeDecision' | 'reserve' | 'release' | 'submit';
+type MutationMethod = 'intent' | 'update' | 'checkPlan' | 'proposeDecision' | 'reserve' | 'release' | 'submit' | 'requestGroup' | 'leaveGroup';
 const mutation = (method: MutationMethod) => (client: AgentClient, args: Record<string, unknown>): Promise<unknown> => {
   const { requestId: key, ...payload } = args;
   return client[method](payload, key as string | undefined);
@@ -64,7 +64,7 @@ export const murmurTools: readonly MurmurToolDefinition[] = [
   {
     name: 'murmur_update_task', title: 'Update task status', readOnly: false,
     description: 'Set the bound task to active, blocked, or ready using its current explicit revision. Cannot approve or complete a task.',
-    inputSchema: z.strictObject({ revision, status: z.enum(['active', 'blocked', 'ready']), requestId }),
+    inputSchema: z.strictObject({ revision, status: z.enum(['active', 'blocked', 'ready']), blocker: plain(2048).nullable().optional(), requestId }),
     invoke: mutation('update'),
   },
   {
@@ -94,5 +94,24 @@ export const murmurTools: readonly MurmurToolDefinition[] = [
     name: 'murmur_submit_task', title: 'Submit task for review', readOnly: false,
     description: 'Submit the bound task using its current explicit revision. Submission is not validation, human approval, integration, or completion.',
     inputSchema: z.strictObject({ revision, requestId }), invoke: mutation('submit'),
+  },
+  {
+    name: 'murmur_request_group_link', title: 'Request a shared work group', readOnly: false,
+    description: 'Request human approval to link this already managed task with related sessions. Supply a new group title or a public invitation code. A code grants no access; this cannot choose another session/task, accept the request, move files, or take over a chat.',
+    inputSchema: z.strictObject({
+      groupTitle: plain(256).optional(), groupGoal: plain(2048).optional(),
+      inviteCode: plain(128).regex(/^[A-Za-z0-9_-]{8,128}$/).optional(), responsibility: plain(2048),
+      handoff: z.strictObject({ summary: plain(4096), changedFiles: z.array(relativePath).max(64).optional(), remainingWork: z.array(plain(512)).max(16).optional(), acceptanceCriteria: z.array(plain(512)).max(16).optional(),
+        reads: z.array(relativePath).max(64).optional(), ...plan, dependencies: z.array(identifier).max(32).optional(),
+        blocker: plain(2048).nullable().optional(),
+        decisions: z.array(z.strictObject({ key, value: plain(2048), version: plain(64), rationale: plain(2048) })).max(8).optional(),
+      }).optional(), requestId,
+    }).refine(input => input.inviteCode === undefined ? input.groupTitle !== undefined : input.groupTitle === undefined && input.groupGoal === undefined, 'Choose a new group or one invitation.'),
+    invoke: mutation('requestGroup'),
+  },
+  {
+    name: 'murmur_leave_group', title: 'Leave this task’s work group', readOnly: false,
+    description: 'Leave only the membership belonging to this managed task using its explicit membership revision. This does not end supervision, release the task’s reservations, complete work, transfer ownership, or stop a native chat.',
+    inputSchema: z.strictObject({ memberId: identifier, revision, requestId }), invoke: mutation('leaveGroup'),
   },
 ];

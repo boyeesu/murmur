@@ -18,7 +18,7 @@ test('schema v1 sessions migrate to explicit manual mode without losing credenti
   original.db.exec('ALTER TABLE sessions DROP COLUMN credentialMode; PRAGMA user_version=1;');
   original.close();
   const migrated=new CoordinationStore(filename); t.after(()=>migrated.close());
-  assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version,2);
+  assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version,3);
   assert.equal(migrated.authenticateSession(token).id,session.id);
   assert.equal(migrated.session(session.id).credentialMode,'manual');
   assert.equal(migrated.heartbeat(session.id,1,mutation('heartbeat',{sessionId:session.id,revision:1})).revision,2);

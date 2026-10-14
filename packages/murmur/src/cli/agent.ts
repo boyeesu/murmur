@@ -8,7 +8,9 @@ const MAX_INPUT_BYTES = 64 * 1024;
 const commands: Record<string, string[]> = {
   identity: [], context: ['after'], updates: ['after'],
   intent: ['data', 'file', 'revision', 'request-id'],
-  update: ['data', 'file', 'revision', 'status', 'request-id'],
+  update: ['data', 'file', 'revision', 'status', 'blocker', 'request-id'],
+  'group-request': ['data', 'file', 'group', 'goal', 'invite', 'responsibility', 'request-id'],
+  'group-leave': ['data', 'file', 'member', 'revision', 'request-id'],
   'check-plan': ['data', 'file', 'request-id'],
   'propose-decision': ['data', 'file', 'key', 'value', 'version', 'rationale', 'request-id'],
   reserve: ['data', 'file', 'revision', 'path', 'ttl', 'request-id'],
@@ -22,7 +24,9 @@ const help = {
     context: '[--after N] Read project context focused on the bound task.',
     updates: '[--after N] Read generated-context event metadata (not model acknowledgement).',
     intent: '--revision N [--data JSON | --file PATH] Declare task intent.',
-    update: '--revision N --status active|blocked|ready',
+    update: '--revision N --status active|blocked|ready [--blocker TEXT] (JSON null clears a blocker)',
+    'group-request': '--group TITLE [--goal TEXT] | --invite CODE; --responsibility TEXT. Requests human approval, never joins implicitly.',
+    'group-leave': '--member ID --revision N. Leave only your group; keep the managed task and supervisor.',
     'check-plan': '[--data JSON | --file PATH] Check an advisory candidate, without changing the task title.',
     'propose-decision': '--key KEY --value TEXT --version VERSION --rationale TEXT (or JSON input)',
     reserve: '--revision N --path PATH [--ttl SECONDS] (or JSON resources and taskRevision)',
@@ -93,6 +97,8 @@ export async function agentMain(argv: string[], env: NodeJS.ProcessEnv = process
   };
   if (flags.has('revision')) set(command === 'reserve' ? 'taskRevision' : 'revision', number(flags.get('revision')!, 'revision'));
   if (flags.has('status')) set('status', flags.get('status'));
+  if (flags.has('blocker')) set('blocker', flags.get('blocker'));
+  for (const [flag, field] of [['group', 'groupTitle'], ['goal', 'groupGoal'], ['invite', 'inviteCode'], ['responsibility', 'responsibility'], ['member', 'memberId']]) if (flags.has(flag)) set(field, flags.get(flag));
   if (flags.has('path')) set('resources', [{ kind: 'path', value: flags.get('path') }]);
   if (flags.has('ttl')) set('ttlSeconds', number(flags.get('ttl')!, 'ttl', 1, 300));
   if (flags.has('lease')) set('leaseId', flags.get('lease'));
@@ -106,6 +112,8 @@ export async function agentMain(argv: string[], env: NodeJS.ProcessEnv = process
     case 'updates': return client.updates(after);
     case 'intent': return client.intent(input, key);
     case 'update': return client.update(input, key);
+    case 'group-request': return client.requestGroup(input, key);
+    case 'group-leave': return client.leaveGroup(input, key);
     case 'check-plan': return client.checkPlan(input, key);
     case 'propose-decision': return client.proposeDecision(input, key);
     case 'reserve': return client.reserve(input, key);

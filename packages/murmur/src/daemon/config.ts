@@ -15,7 +15,7 @@ export async function prepareStateDirectory(directory: string): Promise<string> 
   assert(info.isDirectory(), 'Murmur state must be a directory.');
   assert((info.mode & 0o077) === 0, 'State directory must be private (mode 0700). Use a dedicated directory.', 'INSECURE_STATE');
   if (process.getuid) assert(info.uid === process.getuid(), 'State directory belongs to another user.', 'INSECURE_STATE');
-  for (const name of ['state.sqlite', 'daemon.json']) {
+  for (const name of ['state.sqlite', 'daemon.json', 'connection.json']) {
     try {
       const entry = await lstat(path.join(directory, name));
       assert(entry.isFile() && !entry.isSymbolicLink() && (entry.mode & 0o077) === 0, `Unsafe state file: ${name}.`, 'INSECURE_STATE');

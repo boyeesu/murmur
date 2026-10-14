@@ -1,13 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
-import { assert, canonicalJson, MurmurError } from '../protocol/index.js';
+import { assert, authorizeMutation, externalMutationPrincipal, canonicalJson, MurmurError } from '../protocol/index.js';
 import type { Mutation, Resource, Tool } from '../protocol/index.js';
 import { resourcesOverlap } from '../workspaces/identity.js';
+import { migrateSessions } from './session-migration.js';
 import type { ProjectIdentity } from '../workspaces/identity.js';
 
 export type Project = { id: string; root: string; canonicalPath: string; mode: 'git' | 'advisory'; caseSensitive: number; createdAt: number };
-export type Session = { id: string; projectId: string; tool: Tool; nativeId: string; instanceId: string; workspaceRoot: string; revision: number; createdAt: number; lastSeenAt: number; credentialMode: 'manual' | 'managed' };
+export type Session = { id: string; projectId: string; tool: Tool; nativeId: string; instanceId: string; workspaceRoot: string; revision: number; createdAt: number; lastSeenAt: number; credentialMode: 'manual' | 'managed' | 'external' };
 export type Task = { id: string; projectId: string; ownerSessionId: string; title: string; featureKey: string | null; status: string; revision: number; createdAt: number };
 export type CoordinationEvent = { sequence: number; projectId: string; type: string; payload: unknown; createdAt: number };
 export type Lease = { id: string; projectId: string; sessionId: string; taskId: string; generation: number; resources: Resource[]; expiresAt: number; releasedAt: number | null };
@@ -28,7 +29,7 @@ export class CoordinationStore {
     try {
       this.db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 3000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
       const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-      assert(version <= 2, 'This database was created by a newer Murmur version.', 'SCHEMA_TOO_NEW');
+      assert(version <= 3, 'This database was created by a newer Murmur version.', 'SCHEMA_TOO_NEW');
       if (version === 0) this.db.exec(`
         BEGIN IMMEDIATE;
         CREATE TABLE projects (
@@ -68,12 +69,7 @@ export class CoordinationStore {
         PRAGMA user_version = 1;
         COMMIT;
       `);
-      if (version < 2) this.db.exec(`
-        BEGIN IMMEDIATE;
-        ALTER TABLE sessions ADD COLUMN credentialMode TEXT NOT NULL DEFAULT 'manual' CHECK(credentialMode IN ('manual','managed'));
-        PRAGMA user_version = 2;
-        COMMIT;
-      `);
+      migrateSessions(this.db);
       this.db.exec('CREATE TABLE IF NOT EXISTS murmur_project_bindings (projectId TEXT PRIMARY KEY REFERENCES projects(id), fingerprint TEXT NOT NULL)');
       const bindingColumns = this.db.prepare('PRAGMA table_info(murmur_project_bindings)').all().map(row => row.name);
       assert(bindingColumns.join(',') === 'projectId,fingerprint', 'Unsupported project identity binding schema.', 'SCHEMA_TOO_NEW');
@@ -81,6 +77,7 @@ export class CoordinationStore {
   }
   close(): void { this.db.close(); }
   replay<T>(mutation: Mutation): { found: false } | { found: true; response: T } {
+    authorizeMutation(mutation);
     const cached = this.db.prepare('SELECT digest, response FROM mutations WHERE caller = ? AND key = ?').get(mutation.caller, mutation.key) as { digest: string; response: string } | undefined;
     if (!cached) return { found: false };
     const hash = digest(canonicalJson({ operation: mutation.operation, input: mutation.input }));
@@ -88,9 +85,11 @@ export class CoordinationStore {
     return { found: true, response: JSON.parse(cached.response) as T };
   }
   mutate<T>(mutation: Mutation, operation: () => T): T {
+    authorizeMutation(mutation);
     const hash = digest(canonicalJson({ operation: mutation.operation, input: mutation.input }));
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      authorizeMutation(mutation);
       const cached = this.db.prepare('SELECT digest, response FROM mutations WHERE caller = ? AND key = ?').get(mutation.caller, mutation.key) as { digest: string; response: string } | undefined;
       if (cached) {
         assert(cached.digest === hash, 'Idempotency key was already used with different input.', 'IDEMPOTENCY_CONFLICT', 409);
@@ -131,6 +130,7 @@ export class CoordinationStore {
     return session;
   }
   registerProject(identity: ProjectIdentity, mutation: Mutation): Project {
+    assert(!externalMutationPrincipal(mutation), 'This operation is unavailable to external capabilities.', 'EXTERNAL_FORBIDDEN', 403);
     return this.mutate(mutation, () => {
       const existing = this.db.prepare('SELECT * FROM projects WHERE canonicalPath = ?').get(identity.canonicalPath) as Project | undefined;
       if (existing) {
@@ -157,6 +157,7 @@ export class CoordinationStore {
     assert(fingerprint && row.fingerprint === fingerprint, 'The project directory has been replaced. Existing tasks must not attach to unrelated source.', 'WORKSPACE_CHANGED', 409);
   }
   registerSession(input: { projectId: string; tool: Tool; nativeId: string; instanceId: string; workspaceRoot: string }, mutation: Mutation): { session: Session; token: string } {
+    assert(!externalMutationPrincipal(mutation), 'This operation is unavailable to external capabilities.', 'EXTERNAL_FORBIDDEN', 403);
     return this.mutate(mutation, () => {
       this.project(input.projectId);
       const existing = this.db.prepare('SELECT id FROM sessions WHERE projectId = ? AND tool = ? AND nativeId = ? AND instanceId = ?').get(input.projectId, input.tool, input.nativeId, input.instanceId);
@@ -170,6 +171,7 @@ export class CoordinationStore {
     });
   }
   heartbeat(sessionId: string, revision: number, mutation: Mutation): Session {
+    assert(!externalMutationPrincipal(mutation), 'This operation is unavailable to external capabilities.', 'EXTERNAL_FORBIDDEN', 403);
     return this.mutate(mutation, () => {
       const session = this.session(sessionId);
       assert(session.revision === revision, 'Session revision is stale.', 'STALE_REVISION', 409);
@@ -179,21 +181,32 @@ export class CoordinationStore {
     });
   }
   createTask(input: { projectId: string; sessionId: string; title: string; featureKey: string | null }, mutation: Mutation): Task {
-    return this.mutate(mutation, () => {
-      const session = this.session(input.sessionId);
-      assert(session.projectId === input.projectId, 'Task owner belongs to another project.', 'FORBIDDEN', 403);
-      if (input.featureKey) {
-        const owner = this.db.prepare("SELECT id, ownerSessionId, title FROM tasks WHERE projectId = ? AND featureKey = ? AND status NOT IN ('integrated', 'abandoned')").get(input.projectId, input.featureKey);
-        if (owner) throw new MurmurError('Another active task already owns this feature key. Coordinate or hand off instead of duplicating ownership.', 'FEATURE_ALREADY_OWNED', 409, owner);
-      }
-      const id = randomUUID();
-      this.db.prepare('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, input.projectId, input.sessionId, input.title, input.featureKey, 'active', 1, this.now());
-      this.event(input.projectId, 'task.created', { id, ownerSessionId: input.sessionId });
-      return this.task(id);
-    });
+    assert(!externalMutationPrincipal(mutation), 'This operation is unavailable to external capabilities.', 'EXTERNAL_FORBIDDEN', 403);
+    return this.mutate(mutation, () => this.createTaskRow(input));
   }
-  acquire(input: { projectId: string; sessionId: string; taskId: string; taskRevision: number; resources: Resource[]; ttlSeconds: number }, mutation: Mutation): Lease {
+  createSessionRow(input: { projectId: string; tool: Tool; nativeId: string; instanceId: string; workspaceRoot: string; tokenHash: string; credentialMode: Session['credentialMode'] }): Session {
+    this.project(input.projectId);
+    const id = randomUUID(), now = this.now();
+    this.db.prepare('INSERT INTO sessions(id,projectId,tool,nativeId,instanceId,workspaceRoot,tokenHash,revision,createdAt,lastSeenAt,credentialMode) VALUES (?,?,?,?,?,?,?,1,?,?,?)')
+      .run(id, input.projectId, input.tool, input.nativeId, input.instanceId, input.workspaceRoot, input.tokenHash, now, now, input.credentialMode);
+    this.event(input.projectId, 'session.registered', { id, tool: input.tool, credentialMode: input.credentialMode });
+    return this.session(id);
+  }
+  createTaskRow(input: { projectId: string; sessionId: string; title: string; featureKey: string | null }): Task {
+    assert(this.session(input.sessionId).projectId === input.projectId, 'Task owner belongs to another project.', 'FORBIDDEN', 403);
+    if (input.featureKey) {
+      const owner = this.db.prepare("SELECT id,ownerSessionId,title FROM tasks WHERE projectId = ? AND featureKey = ? AND status NOT IN ('integrated','abandoned')").get(input.projectId, input.featureKey);
+      if (owner) throw new MurmurError('Another active task already owns this feature key. Coordinate or hand off instead of duplicating ownership.', 'FEATURE_ALREADY_OWNED', 409, owner);
+    }
+    const id = randomUUID();
+    this.db.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)').run(id, input.projectId, input.sessionId, input.title, input.featureKey, 'active', 1, this.now());
+    this.event(input.projectId, 'task.created', { id, ownerSessionId: input.sessionId });
+    return this.task(id);
+  }
+  acquire(input: { projectId: string; sessionId: string; taskId: string; taskRevision: number; resources: Resource[]; ttlSeconds: number; grantId?: string; deadline?: number }, mutation: Mutation): Lease {
     return this.mutate(mutation, () => {
+      const external = externalMutationPrincipal(mutation);
+      if (external) assert(input.projectId === external.projectId && input.sessionId === external.sessionId && input.taskId === external.taskId && input.grantId === external.grantId && input.deadline === external.expiresAt, 'Reservation must use the immutable external grant binding.', 'EXTERNAL_FORBIDDEN', 403);
       const task = this.task(input.taskId);
       assert(task.projectId === input.projectId && task.ownerSessionId === input.sessionId, 'Only the assigned task owner may acquire its reservations.', 'FORBIDDEN', 403);
       assert(!['integrated', 'abandoned'].includes(task.status), 'Terminal tasks cannot acquire reservations.', 'TASK_TERMINAL', 409);
@@ -205,9 +218,11 @@ export class CoordinationStore {
         const overlaps = input.resources.filter(resource => lease.resources.some(existing => resourcesOverlap(resource, existing)));
         if (overlaps.length) throw new MurmurError('Requested resources overlap an active reservation.', 'RESERVATION_CONFLICT', 409, { leaseId: lease.id, taskId: lease.taskId, sessionId: lease.sessionId, resources: overlaps, expiresAt: lease.expiresAt });
       }
+      if (input.grantId !== undefined) assert(mutation.caller.startsWith(`external:${input.grantId}:`) && input.deadline !== undefined && input.deadline > now, 'External lease needs its grant authorization.', 'EXTERNAL_FORBIDDEN', 403);
       const id = randomUUID();
-      this.db.prepare('INSERT INTO leases(id, projectId, sessionId, taskId, resources, expiresAt) VALUES (?, ?, ?, ?, ?, ?)').run(id, input.projectId, input.sessionId, input.taskId, JSON.stringify(input.resources), now + input.ttlSeconds * 1000);
+      this.db.prepare('INSERT INTO leases(id, projectId, sessionId, taskId, resources, expiresAt) VALUES (?, ?, ?, ?, ?, ?)').run(id, input.projectId, input.sessionId, input.taskId, JSON.stringify(input.resources), Math.min(now + input.ttlSeconds * 1000, input.deadline ?? Number.MAX_SAFE_INTEGER));
       const lease = this.lease(id);
+      if (input.grantId) this.db.prepare('INSERT INTO external_grant_leases(grantId,leaseId,generation) VALUES (?,?,?)').run(input.grantId, lease.id, lease.generation);
       this.event(input.projectId, 'reservation.acquired', lease);
       return lease;
     });
@@ -220,6 +235,8 @@ export class CoordinationStore {
   changeLease(input: { id: string; sessionId: string; generation: number; ttlSeconds?: number }, mutation: Mutation): Lease {
     return this.mutate(mutation, () => {
       const lease = this.lease(input.id);
+      const external = externalMutationPrincipal(mutation);
+      if (external) assert(input.ttlSeconds === undefined && lease.projectId === external.projectId && lease.taskId === external.taskId && lease.sessionId === external.sessionId && this.db.prepare('SELECT 1 FROM external_grant_leases WHERE grantId=? AND leaseId=? AND generation=?').get(external.grantId, lease.id, lease.generation), 'External grants may release only their own reservation generation, never renew.', 'EXTERNAL_FORBIDDEN', 403);
       assert(lease.sessionId === input.sessionId, 'Reservation belongs to another session.', 'FORBIDDEN', 403);
       assert(lease.generation === input.generation && lease.releasedAt === null && lease.expiresAt > this.now(), 'Reservation is expired, released, or has a stale fencing token.', 'STALE_LEASE', 409);
       if (input.ttlSeconds !== undefined) assert(!['integrated', 'abandoned'].includes(this.task(lease.taskId).status), 'Terminal tasks cannot renew reservations.', 'TASK_TERMINAL', 409);

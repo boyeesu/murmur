@@ -67,7 +67,7 @@ function installFetch(t, implementation) { t.mock.method(globalThis, 'fetch', im
 
 test('bridge import graph excludes human client, daemon config, and storage', () => {
   assert.deepEqual(loaded, modules);
-  assert.deepEqual(Object.getOwnPropertyNames(AgentClient.prototype).sort(), ['constructor', 'identity', 'context', 'updates', 'intent', 'update', 'checkPlan', 'proposeDecision', 'reserve', 'release', 'submit'].sort());
+  assert.deepEqual(Object.getOwnPropertyNames(AgentClient.prototype).sort(), ['constructor', 'identity', 'context', 'updates', 'intent', 'update', 'checkPlan', 'proposeDecision', 'reserve', 'release', 'submit', 'requestGroup', 'leaveGroup'].sort());
   const client = new AgentClient(connection, async () => { throw new Error('not called'); });
   assert.equal(client.request, undefined);
   assert.equal(JSON.stringify(client), '{}');

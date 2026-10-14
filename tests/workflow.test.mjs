@@ -355,7 +355,7 @@ test('plain folders remain advisory and workflow extension leaves base schema ve
   const identity = await discoverProject(root), project = f.store.registerProject(identity, mutation('project.register', identity));
   await assert.rejects(f.call('createWorkspace', { projectId: project.id }), errorCode('GIT_REQUIRED'));
   assert.equal((await f.workflow.reconcile(project.id))[0].mode, 'advisory');
-  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 2);
+  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 3);
 });
 
 test('symbolic integration refs cannot redirect promotion onto the original branch', async t => {

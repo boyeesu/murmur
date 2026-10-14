@@ -1,4 +1,7 @@
 import { LaunchService } from '../core/launches.js';
+import { GroupsService } from '../core/groups.js';
+import { ExternalGrantService } from '../core/external-grants.js';
+import { readConnections, writeConnections } from './connections.js';
 import { WorkspaceObserver } from './observer.js';
 import { CoordinationService } from '../core/coordination.js';
 import { GitWorkflow } from '../integration/workflow.js';
@@ -12,15 +15,34 @@ export class ExtendedServices {
   workflow: GitWorkflow;
   observer: WorkspaceObserver;
   launches: LaunchService;
+  groups: GroupsService;
+  external: ExternalGrantService;
+  private externalSweep: NodeJS.Timeout | undefined;
   constructor(store: CoordinationStore, directory: string, runtime: { origin: string; stateId: string; instanceId: string }) {
     this.coordination = new CoordinationService(store);
     this.workflow = new GitWorkflow(store, directory);
     this.observer = new WorkspaceObserver(store, this.workflow);
     this.launches = new LaunchService(store, this.workflow, this.coordination, runtime);
+    this.groups = new GroupsService(store, this.coordination);
+    this.external = new ExternalGrantService(store, this.coordination, this.groups, runtime);
   }
-  async initialize(): Promise<void> { await this.workflow.initialize(); this.launches.start(); this.observer.start(); }
-  async close(): Promise<void> { this.workflow.close(); await this.launches.close(); await this.observer.close(); }
+  async initialize(): Promise<void> {
+    await this.workflow.initialize();
+    this.external.sweep();
+    this.externalSweep = setInterval(() => {
+      try { this.external.sweep(); } catch { /* Every authenticated operation also checks expiry. */ }
+    }, 1000);
+    this.externalSweep.unref();
+    this.launches.start(); this.observer.start();
+  }
+  async close(): Promise<void> {
+    if (this.externalSweep) clearInterval(this.externalSweep);
+    this.externalSweep = undefined;
+    this.workflow.close(); await this.launches.close(); await this.observer.close();
+  }
   async read(url: URL, principal: Principal): Promise<{ handled: boolean; result?: unknown }> {
+    const connection = await readConnections(this.groups, this.external, url, principal);
+    if (connection.handled) return connection;
     if (url.pathname === '/v1/launches') {
       requireHuman(principal);
       return { handled: true, result: this.launches.list(url.searchParams.get('projectId') ?? undefined) };
@@ -56,6 +78,8 @@ export class ExtendedServices {
     return { handled: true, result };
   }
   async write(endpoint: string, body: Record<string, unknown>, principal: Principal, mutation: Mutation): Promise<{ handled: boolean; result?: unknown }> {
+    const connection = await writeConnections(this.groups, this.external, endpoint, body, principal, mutation);
+    if (connection.handled) return connection;
     const coordination = this.coordination;
     const workflow = this.workflow;
     const routes: Record<string, () => unknown | Promise<unknown>> = {

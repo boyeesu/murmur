@@ -22,7 +22,7 @@ const mcpModule = new URL('../packages/murmur/dist/cli/mcp.js', import.meta.url)
 const connection = Object.freeze({ protocolVersion: 1, origin: 'http://127.0.0.1:43123', stateId: '1'.repeat(64),
   launchId: 'launch-mcp', projectId: 'project-mcp', sessionId: 'session-mcp', taskId: 'task-mcp', agentToken: 'mcp-fixture-secret_'.padEnd(43, 'z') });
 const names = ['murmur_identity', 'murmur_get_context', 'murmur_get_updates', 'murmur_declare_intent', 'murmur_update_task',
-  'murmur_check_plan', 'murmur_propose_decision', 'murmur_reserve_resources', 'murmur_release_resources', 'murmur_submit_task'];
+  'murmur_check_plan', 'murmur_propose_decision', 'murmur_reserve_resources', 'murmur_release_resources', 'murmur_submit_task', 'murmur_request_group_link', 'murmur_leave_group'];
 const identity = (extra = {}) => ({ role: 'agent', protocolVersion: 1, stateId: connection.stateId, instanceId: 'instance-mcp',
   launchId: connection.launchId, projectId: connection.projectId, sessionId: connection.sessionId, taskId: connection.taskId,
   expiresAt: Date.now() + 120000, ...extra });

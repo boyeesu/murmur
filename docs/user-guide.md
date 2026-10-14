@@ -1,15 +1,20 @@
 # Using Murmur
 
-Murmur is a **local alpha with opt-in managed CLI launches** for coordinating
-parallel coding work. Claude Code and Codex can be launched with automatic
-registration, workspace preparation, startup context, and scoped coordination
-commands. The original human-operated workflow remains available.
+Murmur is a **local 0.5 alpha** for coordinating parallel coding work. Managed
+launchers create fresh tasks with automatic registration, workspace preparation,
+startup context, and scoped commands. **Claude Code 2.1.247** also has a same-chat
+connector: export a plugin, explicitly resume the original conversation, request
+human approval, then refresh shared context. The original human-operated workflow,
+project groups, and reviewed handoffs remain available in **Connections**.
 
-**The practical distinction:** managed launchers supply initial context and a
-scoped command interface, but agents must invoke it for later updates. Murmur does
-not discover existing sessions or guarantee per-turn injection. The official MCP bridge and advisory hook commands are available, but native
-configuration/verification differs by tool. Existing sessions are not discovered
-automatically; see the capability matrix for remaining gates.
+**The practical distinction:** the Claude connector is verified with headless native
+fixtures and native-authored history, **not a real-user chat/model trial**. It does not
+discover sessions, import history, hot-install into an already-open CLI, or automatically
+publish intent in the background. Other native hosts/Claude versions remain gated.
+Managed MCP/advisory hooks are separate features whose native verification differs
+by tool. Explicit context delivery is not a guarantee of model compliance. See
+[groups and session connections](session-linking.md) and the
+[support matrix](support-matrix.md).
 
 ## Start with the right mental model
 
@@ -19,6 +24,8 @@ automatically; see the capability matrix for remaining gates.
 | Owner/session record | Bookkeeping that associates work with an owner. It is **not** a live connection to a coding tool. |
 | Workspace | The actual checkout in which files are edited. Independent editing tasks should use separate workspaces. |
 | Coding agent | Claude Code, Codex, Cursor, OpenCode, or another tool that **you open in the workspace**. |
+| Group | Project-focused context linking distinct responsibilities; not shared task ownership or merged chat history. |
+| External grant | Human-approved access to one exact task/session/membership/workspace for a fixed lifetime, not a native-process supervisor. |
 
 **First trial:** follow steps 1–5 to create two tasks and see a duplicate-contract
 alert without changing source files. Continue with steps 6–9 when you want isolated
@@ -27,6 +34,8 @@ editing and reviewed Git integration.
 - [Install and open the dashboard](#1-install-and-start)
 - [Create tasks and declare intent](#3-create-a-task-and-an-owner-record)
 - [Share context with a coding tool](#5-share-decisions-and-give-the-agent-its-context)
+- [Connect the original Claude conversation](#optional-connect-the-original-claude-conversation)
+- [Link separate responsibilities in Connections](#optional-group-related-work-in-connections)
 - [Use separate workspaces](#6-give-each-independent-editing-task-its-own-workspace)
 - [Submit and integrate committed work](#7-submit-committed-work)
 - [Common questions](#common-questions)
@@ -34,7 +43,7 @@ editing and reviewed Git integration.
 ## What you need
 
 - A local computer with Node.js and Git.
-- The source folder or the supplied `murmur-local-0.3.0.tgz` package.
+- The source folder or the supplied `murmur-local-0.5.0.tgz` package.
 - A Git-backed project **with at least one commit** for workspace isolation and
   integration. An ordinary folder
   can use task/decision coordination, but not the Git workflow.
@@ -93,7 +102,7 @@ or editor for the coding agent later.
 From the folder containing the downloaded `.tgz` file:
 
 ```bash
-npm install --global --ignore-scripts --offline ./murmur-local-0.3.0.tgz
+npm install --global --ignore-scripts --offline ./murmur-local-0.5.0.tgz
 ```
 
 Use a user-managed Node installation. If global installation requires permissions
@@ -233,21 +242,101 @@ It requires V2 `--standalone`/`--prompt` support and refuses MCP or context-hook
 flags before preparation. Its native session identity and descendant cleanup are
 not claimed verified by CLI help or fake-process tests. See [OpenCode details](opencode.md).
 
+## Optional: connect the original Claude conversation
+
+The **Claude Code 2.1.247-only** same-chat connector keeps the original conversation
+and native history. It is not `murmur run`, a replacement task/chat, or automatic
+attachment to an already-open CLI. A process with any existing `MURMUR_AGENT_` or
+`MURMUR_EXTERNAL_` environment marker is refused with `NATIVE_ALREADY_SCOPED` rather
+than creating a second connection. Use its existing agent/MCP or external scoped
+commands instead; do not remove scope markers to bypass this boundary.
+
+1. From a **human terminal in the original project**, ensure the daemon is running
+   and register the project if needed. Use the same `MURMUR_HOME` as the daemon.
+2. Inspect `murmur connect --help`, then export a new plugin directory:
+
+```bash
+murmur connect setup --tool claude --out /absolute/new/plugin-dir
+```
+
+3. Setup checks the actual 2.1.247 executable/version, canonical public descriptor,
+   and owner-private helper state. It exports files only—no native settings edits,
+   global plugin installation, login, enrollment, or `--force` override. Review them.
+4. **Pause/exit the original Claude CLI before opening it again** to avoid duplicate
+   writers. Run the returned absolute `resumeCommand` from the original project;
+   `--plugin-dir` loads the bundle and `--resume` opens the native picker. Choose the
+   original conversation. **Pass `--plugin-dir` again on every resume.**
+5. In that conversation, request a connection:
+
+```text
+/murmur:connect start Password reset | Own the API contract
+```
+
+Or join with the exact **43-character base64url** invite from Connections:
+
+```text
+/murmur:connect join INVITE_CODE | Own the UI flow
+```
+
+6. In the normally authenticated Murmur UI, select **Connections → Approval requests
+   → Review request → Inspect workspace / fresh review**. Check the exact original
+   workspace/project, responsibility, new separate task owner, sharing scope, lifetime,
+   and handoff. Review/edit the reported changed files and remaining work before approval.
+7. Back in the same conversation, activate approved access and retrieve context:
+
+```text
+/murmur:connect refresh
+```
+
+Use `/murmur:connect status`, `/murmur:connect leave`, and `/murmur:connect help` as
+needed. Status can also activate an approved pending request; refresh adds context.
+Start/join only request approval. Leave preserves the task, files, and native chat.
+Plain prompts do not automatically publish intent or refresh context; invoke refresh
+again when relevant work changes. The namespaced command is **not** `/murmur` or
+`@murmur`, and there are no model-supplied session/cwd selectors.
+
+Ordinary resume retains the UUID/valid approved scope. Observed fork and clear create
+new UUIDs and report disconnected rather than inheriting the parent grant. They need
+their own review/approval. Explicit original resume still works while its grant remains
+valid; clear does not revoke that original access globally. Murmur does not scan or
+import native history. Read the [complete setup and lifecycle guide](session-linking.md#connect-an-existing-claude-conversation),
+including absolute source-CLI commands that let you stay in the original project.
+
+### Completion checklist: what 0.5 does and does not establish
+
+- [x] Claude 2.1.247 export → explicit same-chat resume → request → human review → refresh.
+- [x] Headless native production-plugin checks for separate same-cwd owners, resumed
+      scope, fork/clear disconnection, explicit original resume, and own-grant leave.
+- [x] Existing 0.4 manual/API groups, reviewed handoffs, fixed expiry, and separate ownership.
+- [ ] Your own real-chat/model trial and confirmation that the model follows the context.
+- [ ] Direct hot attachment/reload of a plugin into an already-open CLI.
+- [ ] Cross-host existing-chat support for Codex, OpenCode, Cursor, or other Claude versions.
+- [ ] Automatic background intent publication or automatic ongoing context refresh.
+- [ ] Broader native MCP acceptance, restricted managed resume, and automatic four-tool coordination.
+
+The checked native items used **native-authored disposable history**, empty HOME/config,
+a dummy key, and an owned static loopback API responder—no actual LLM inference.
+They do not prove interactive trust behavior, a stronger OS sandbox, or absence of
+Keychain access. The earlier denied nested containment probe remains in the
+[dated evidence](verification-existing-chats.md), alongside the separate 0.5 result.
+
 The following sections describe the manual fallback, which remains useful for
-existing sessions and tools without a managed launcher.
+unsupported hosts and workflows without a connector.
 
 ## 3. Create a task and an owner record
 
 Open **Tasks → New task** and enter:
 
 - **Task title:** a concrete outcome, such as “Implement password reset endpoint.”
-- **Feature key:** optional shared identity, such as `password-reset-api`. Murmur
-  refuses a second active owner of the same feature key.
+- **Feature key:** optional exclusive active-work claim, such as `password-reset-api`.
+  Murmur refuses a second active task with the same key in the project. It is **not**
+  a group key; use Connections to group independently owned tasks.
 - **Owner:** choose **Create a manual session** for each independent agent/task.
 - **Manual session workspace:** initially use the registered project root.
 
-Be deliberate about Owner: when sessions already exist, the form defaults to an
-existing one. Reusing one owner for several independent workspaces can prevent
+Be deliberate about Owner: when manual sessions already exist, the form defaults
+to an existing manual owner. Managed and external credentials are not reusable
+manual task owners. Reusing one owner for several independent workspaces can prevent
 later attachment. Start with one manual owner record per independent editing task.
 
 **A manual session is bookkeeping, not a running coding agent.** It does not launch,
@@ -317,7 +406,9 @@ murmur context --project PROJECT_ID --task TASK_ID
 ```
 
 The CLI returns JSON, including a `briefing` string. **This copy/paste step is
-currently manual.** The future MCP/native adapters are intended to remove it.
+manual for manual members.** Managed tasks can use their scoped CLI/MCP bridge
+where supported. The approved Claude 2.1.247 same-chat connector retrieves context
+through explicit `/murmur:connect refresh`; other native existing-chat hosts remain gated.
 
 For example, tell the agent: “Work on this task only in the workspace I opened.
 Here is the current Murmur context. Treat other tasks' unmerged implementations
@@ -327,6 +418,70 @@ This is a human handoff, not a guarantee that the model will follow every instru
 The CLI and dashboard are human-operated. Do not give agents the daemon's human
 credential or tell them to approve their own decisions/integrations. Advanced API
 clients should use scoped session credentials; see [the protocol](protocol.md).
+
+## Optional: group related work in Connections
+
+A group shares project focus without taking over a chat or combining task owners.
+The **project selector scopes groups and grants**; **Approval requests** are
+human-only and workspace-wide because an unreviewed workspace hint may not resolve
+to that selected project.
+
+1. Choose **Connections → Create group** and enter its shared goal/title.
+2. In the group, choose **Add existing owner** for a non-terminal manual task or
+   the existing task of an active managed launch. Review the separate member
+   session, assigned task, current owner, and responsibility. An external session
+   cannot be added manually, even when disconnected.
+3. Review the summary, **Files already changed (reported)**, **Remaining work**
+   checklist, acceptance criteria, intended read/write paths, contracts, dependency
+   IDs, blocker, and decision proposals before sharing. Reported changed files are
+   past-change claims, not planned writes or filesystem proof. Imported
+   decisions are not accepted automatically.
+4. **Invite another chat** creates a locally generated public code whose hash alone
+   is stored by the daemon. It is single-use, expires after 15 minutes, and only
+   requests approval. Copy it before closing its result; revoke it from the group
+   when no longer needed. Native use still depends on a verified host integration.
+
+For a pending request, use **Review request → Inspect workspace / fresh review**.
+Match the reported native metadata to the intended chat; it is not authentication.
+Inspect the resolved project, canonical workspace, responsibility, sharing scope,
+and lifetime. Shared-checkout/advisory warnings mean no isolation is being created.
+Keep or edit only the handoff you want shared, then explicitly approve or reject.
+A stale review or HTTP failure preserves edits and requires fresh review, not blind
+approval retry. A public `#request=…` reference cannot sign a browser in.
+
+New external grants default to **8 hours**, maximum **24 hours**, and activity never
+extends them. Managed members keep their existing task and supervised lifetime
+without a new external grant. An already managed task can request approval through
+`murmur agent group-request` or the managed MCP tool `murmur_request_group_link`;
+`group-leave` / `murmur_leave_group` leave only its own grouping. These are not
+arbitrary existing-chat adoption tools. **Approved · not yet used**, bridge-contact
+timestamps, and expired/revoked states are distinct: none proves native-process liveness.
+
+Lost/revoked/expired credentials require a new request and approval. An explicit
+**Task binding** selection can reconnect only a daemon-reviewed eligible same-chat
+session and still-owned task; it preserves the owner, title, and exclusive feature
+claim and issues new authority. The default is a new separately owned task.
+
+**Leave group**, **Close group**, and **Revoke scoped access** do not hand off,
+abandon, finish, move, or stop the original task/chat. Use **Task actions** separately
+for ownership handoff or abandonment. Files and feature claims are preserved.
+
+For unsupported native hosts, first integrate or explicitly abandon the original
+Murmur task, keeping its group active and ownership unchanged. Then use **Export
+reviewed handoff**, review its exact JSON, and download/copy a fresh source-revision
+snapshot for an explicitly launched **new** managed task. Export again if source
+revisions changed after an earlier export. No native history, credentials, or source
+files are imported; merely leaving/revoking or transferring ownership is not enough. Use `run --handoff FILE`
+with `--acknowledge-replacement` and an explicit **full committed SHA** in `--base`.
+The source group/owner/workspace are rechecked; dirty-source consent never copies
+uncommitted progress. Export itself does not launch anything. The exact human CLI
+example is in [the connection guide](session-linking.md#reviewed-handoff-for-a-new-managed-task).
+
+Claude Code **2.1.247** has the separately verified explicit plugin + same-chat
+resume path described above. Other hosts and direct already-open hot attachment
+remain unverified/gated. Exporting/loading the plugin is not enrollment; human
+review and approval are still required. Use `/murmur:connect`, not `/murmur` or
+`@murmur`. See [groups and approved connections](session-linking.md) for the boundaries.
 
 ## 6. Give each independent editing task its own workspace
 
@@ -451,7 +606,7 @@ candidate inspection. If fast-forward is refused, **stop and reconcile deliberat
 do not force-reset your branch. An independently changed branch creates a different
 combination that needs validation. Murmur does not push or open a PR for you.
 
-## 10. End or resume a session
+## 10. End coordination or reopen the service
 
 Leave the daemon running while coordinating work. Stop it with Ctrl-C in its
 terminal, or:
@@ -462,7 +617,9 @@ murmur daemon stop
 
 Restart using the same state directory to recover the recorded projects/tasks.
 A disconnected agent or expired lease does not remove its files or complete its
-task. Do not delete live state or workspaces as a recovery shortcut.
+task. External expiry and membership leave also do not stop a native chat.
+Restarting the daemon is not native resume; lost external credentials need fresh
+request approval. Do not delete live state or workspaces as a recovery shortcut.
 
 ### Retrying CLI operations safely
 
@@ -482,8 +639,17 @@ task requires `--confirm`; it is not the same as deleting its workspace or files
 
 | Question | Current answer |
 | --- | --- |
-| Will Murmur find my existing sessions? | No. Managed launchers register only new Claude/Codex tasks started through Murmur. |
+| Will Murmur find or take over my existing sessions? | No automatic discovery or takeover. Claude 2.1.247 can use an exported plugin and explicit native resume of the original conversation; other native hosts remain gated. Managed launchers start new tasks. |
+| Does a group share task ownership? | No. Each member has its own session/task binding; feature keys remain exclusive active-work claims. |
+| Does an invite or public request link grant access? | No. Invitations only request approval; public request references require normal human browser login. |
+| Does expiry stop my original chat? | No. It revokes scoped access, not native processes or task ownership. |
+| Can I recover a lost external credential by native ID? | No. Use fresh approval; an explicit eligible reconnect issues new authority without transferring the task. |
 | Why does Adapters say unverified? | Launcher/CLI-bridge implementation is separate from verified native MCP/hooks or model-driven use. |
+| Why does a native command report `NATIVE_ADAPTER_UNVERIFIED`? | Direct `murmur native` actions/caller-selected identity are unavailable. Only the fixed exported Claude 2.1.247 hook is enabled; use `/murmur:connect` after explicit plugin/resume setup. Other hosts need the manual/managed-group or reviewed-handoff fallback. |
+| Can I load it into a Claude CLI that is already open? | Direct hot attachment/reload is unverified. Pause/exit that CLI, then use setup's explicit plugin/resume command in the original project. |
+| Must I pass `--plugin-dir` again? | Yes, on every resume. Setup does not persist a native plugin installation. |
+| Does a fork or clear retain its parent connection? | No. The observed 2.1.247 paths create a new UUID and report disconnected. Explicit original resume can still use the original valid grant. |
+| Does refresh run automatically? | No. Run `/murmur:connect refresh` explicitly after approval and when relevant context changes. Ordinary prompts do not publish intent or refresh in the background. |
 | Why are there no intent alerts? | Declarations are required. In managed mode the agent must use its scoped intent command; otherwise enter the declaration manually. |
 | Why does my agent still edit the original folder? | Attachment only changes records. Reopen the agent in the displayed workspace root. |
 | Why did workspace attachment fail? | Check for active reservations or other tasks owned by that same session. Prefer a separate owner per independent editing task. |

@@ -97,7 +97,7 @@ test('prepare creates a new owner at the pinned managed root, rotates the interi
   publicOnly([f.launches.get(p.launch.id), f.launches.list(), f.store.snapshot(), f.store.events(f.project.id, 0), journal], [interim, p.agent.agentToken, p.supervisor.supervisorToken]);
   assert.equal(git(f.root, 'status', '--porcelain'), ''); assert.equal(git(f.root, 'rev-parse', 'HEAD'), baseSha);
   assert.equal(git(f.root, 'branch', '--show-current'), 'main');
-  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 2);
+  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 3);
 });
 
 test('dirty source needs explicit consent; committed work only is copied and Codex identity stays unverified', async t => {

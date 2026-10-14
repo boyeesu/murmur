@@ -409,16 +409,23 @@ export class LaunchService {
       const routes: Record<string, string[]> = {
         '/v1/intents': ['taskId', 'revision', 'acceptanceCriteria', 'reads', 'writes', 'produces', 'consumes', 'dependencies'],
         '/v1/check-plan': ['projectId', 'taskId', 'title', 'writes', 'produces', 'consumes'],
-        '/v1/tasks/update': ['taskId', 'revision', 'status'],
+        '/v1/tasks/update': ['taskId', 'revision', 'status', 'blocker'],
         '/v1/decisions/propose': ['projectId', 'taskId', 'key', 'value', 'version', 'rationale'],
         '/v1/reservations/acquire': ['projectId', 'sessionId', 'taskId', 'taskRevision', 'resources', 'ttlSeconds'],
         '/v1/reservations/release': ['leaseId', 'sessionId', 'generation'],
         '/v1/submissions': ['taskId', 'revision'],
+        '/v1/groups/requests': ['groupTitle', 'groupGoal', 'inviteHash', 'responsibility', 'handoff'],
+        '/v1/groups/members/leave': ['memberId', 'revision'],
       };
       deny(own(routes, url.pathname));
       const input = object(body);
       deny(Object.keys(input).every(key => routes[url.pathname]!.includes(key)));
-      if (url.pathname === '/v1/reservations/release') {
+      if (url.pathname === '/v1/groups/requests') {
+        // No selectors: GroupsService derives the existing immutable managed task binding.
+      } else if (url.pathname === '/v1/groups/members/leave') {
+        const member = this.store.db.prepare("SELECT projectId,sessionId,taskId,kind,state FROM group_members WHERE id=?").get(identifier(input.memberId, 'memberId'));
+        deny(member && member.projectId === identity.projectId && member.sessionId === identity.sessionId && member.taskId === identity.taskId && member.kind === 'managed' && member.state === 'active');
+      } else if (url.pathname === '/v1/reservations/release') {
         deny(input.sessionId === identity.sessionId);
         const lease = this.store.db.prepare('SELECT projectId, sessionId, taskId FROM leases WHERE id = ?').get(identifier(input.leaseId, 'leaseId'));
         deny(lease && lease.projectId === identity.projectId && lease.sessionId === identity.sessionId && lease.taskId === identity.taskId);

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { assert, canonicalJson, integer, MurmurError, object, text } from '../protocol/index.js';
 import { PROTOCOL_HEADER, STATE_HEADER, validateAgentConnection } from '../protocol/agent.js';
 import type { AgentConnection, AgentIdentity } from '../protocol/agent.js';
@@ -143,10 +143,50 @@ export class AgentClient {
   }
 
   async update(payload: unknown, key?: string): Promise<any> {
-    const input = this.#payload(payload, ['taskId', 'revision', 'status'], ['taskId']);
+    const input = this.#payload(payload, ['taskId', 'revision', 'status', 'blocker'], ['taskId']);
     revision(input.revision);
+    if (Object.hasOwn(input, 'blocker') && input.blocker !== null) plain(input.blocker, 'blocker', 2048);
     assert(['active', 'blocked', 'ready'].includes(input.status as string), 'Agent status must be active, blocked, or ready.', 'AGENT_INPUT');
     return this.#post('/v1/tasks/update', input, key);
+  }
+
+  /** Requests human review; the invitation never grants access by itself. */
+  async requestGroup(payload: unknown, key?: string): Promise<any> {
+    const input = this.#payload(payload, ['groupTitle', 'groupGoal', 'inviteCode', 'responsibility', 'handoff'], []);
+    plain(input.responsibility, 'responsibility', 2048);
+    if (Object.hasOwn(input, 'inviteCode')) {
+      assert(!Object.hasOwn(input, 'groupTitle') && !Object.hasOwn(input, 'groupGoal'), 'Choose a new group or an invitation, not both.', 'AGENT_INPUT');
+      const code = plain(input.inviteCode, 'public invite code', 128);
+      assert(/^[A-Za-z0-9_-]{8,128}$/.test(code), 'Invalid public invite code.', 'AGENT_INPUT');
+      input.inviteHash = createHash('sha256').update(code).digest('hex');
+      delete input.inviteCode;
+    } else {
+      plain(input.groupTitle, 'group title', 256);
+      if (Object.hasOwn(input, 'groupGoal')) plain(input.groupGoal, 'group goal', 2048);
+    }
+    if (Object.hasOwn(input, 'handoff')) {
+      const draft = fields(input.handoff, ['summary', 'acceptanceCriteria', 'reads', 'writes', 'produces', 'consumes', 'dependencies', 'blocker', 'decisions', 'changedFiles', 'remainingWork']);
+      plain(draft.summary, 'handoff summary', 4096);
+      list(draft, 'changedFiles', 64, relativePath);
+      list(draft, 'remainingWork', 16, value => { plain(value, 'remaining work', 512); });
+      list(draft, 'acceptanceCriteria', 16, value => { plain(value, 'acceptance criterion', 512); });
+      list(draft, 'dependencies', 32, value => { identifier(value, 'dependency'); });
+      planFields(draft);
+      if (Object.hasOwn(draft, 'blocker') && draft.blocker !== null) plain(draft.blocker, 'blocker', 2048);
+      list(draft, 'decisions', 8, value => {
+        const decision = fields(value, ['key', 'value', 'version', 'rationale']);
+        const key = plain(decision.key, 'decision key', 128);
+        assert(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(key), 'Invalid decision key.', 'AGENT_INPUT');
+        plain(decision.value, 'decision value', 2048); plain(decision.version, 'decision version', 64); plain(decision.rationale, 'decision rationale', 2048);
+      });
+    }
+    return this.#post('/v1/groups/requests', input, key);
+  }
+
+  async leaveGroup(payload: unknown, key?: string): Promise<any> {
+    const input = this.#payload(payload, ['memberId', 'revision'], []);
+    identifier(input.memberId, 'memberId'); revision(input.revision);
+    return this.#post('/v1/groups/members/leave', input, key);
   }
 
   async checkPlan(payload: unknown, key?: string): Promise<any> {

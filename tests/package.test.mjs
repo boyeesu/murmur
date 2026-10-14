@@ -24,7 +24,11 @@ test('packed CLI installs offline and runs outside the source checkout', async t
   assert(info.files.some(file => file.path === 'docs/user-guide.md'));
   assert(info.files.some(file => file.path === 'docs/release-checklist.md'));
   assert(info.files.some(file => file.path === 'dist/dashboard/index.html'));
-  assert(!info.files.some(file => file.path.includes('daemon.json') || file.path.includes('.claude')));
+  assert(info.files.some(file => file.path === 'dist/native/claude/skills/connect/SKILL.md'));
+  assert(info.files.some(file => file.path === 'dist/native/claude/hooks/hooks.json'));
+  assert(info.files.some(file => file.path === 'docs/session-linking.md'));
+  assert(info.files.some(file => file.path === 'docs/verification-existing-chats.md'));
+  assert(!info.files.some(file => file.path.includes('daemon.json') || file.path.includes('.claude') && file.path !== 'dist/native/claude/.claude-plugin/plugin.json'));
   for (const name of ['@modelcontextprotocol/sdk', 'zod', 'zod-to-json-schema', 'ajv', 'express']) {
     assert(info.bundled.includes(name), `missing bundled runtime package: ${name}`);
   }
@@ -43,9 +47,22 @@ test('packed CLI installs offline and runs outside the source checkout', async t
   const cli = path.join(installation, 'node_modules', 'murmur-local', 'dist', 'cli', 'index.js');
   const result = await execute(process.execPath, [cli, '--help'], { cwd: installation, env, timeout: 10000 });
   assert(result.stdout.includes('integration approve'));
+  assert(result.stdout.includes('group <action>'));
+  assert(result.stdout.includes('connect <action>'));
+  for (const command of ['group', 'connect', 'external']) {
+    const help = await execute(process.execPath, [cli, command, '--help'], { cwd: installation, env, timeout: 10000 });
+    assert(help.stdout.includes('murmur ' + command));
+  }
+  const native = await execute(process.execPath, [cli, 'native', '--help'], { cwd: installation, env, timeout: 10000 });
+  assert.equal(JSON.parse(native.stdout).claude.enabled, true);
+  assert.equal(JSON.parse(native.stdout).claude.hotAttachVerified, false);
+  await assert.rejects(execute(process.execPath, [cli, 'native', 'start'], { cwd: installation, env, timeout: 10000 }), error => error.stderr.includes('NATIVE_ADAPTER_UNVERIFIED') && !error.stdout);
+  const assets = path.join(installation, 'node_modules', 'murmur-local', 'dist', 'native', 'claude');
+  assert((await readFile(path.join(assets, 'skills', 'connect', 'SKILL.md'), 'utf8')).includes('/murmur:connect'));
+  assert.equal(JSON.parse(await readFile(path.join(assets, 'hooks', 'hooks.json'), 'utf8')).hooks.UserPromptSubmit[0].hooks[0].command, '__MURMUR_FIXED_HOOK_COMMAND__');
   await access(path.join(installation, 'node_modules', 'murmur-local', 'dist', 'dashboard', 'app.js'));
   const guide = await readFile(path.join(installation, 'node_modules', 'murmur-local', 'docs', 'user-guide.md'), 'utf8');
-  assert(guide.includes('managed CLI launches'));
+  assert(guide.includes('managed launch'));
   assert(guide.includes('Create a manual session'));
   const packageRoot = path.join(installation, 'node_modules', 'murmur-local');
   const dependencyManifests = info.files.filter(file => /(?:^|\/)node_modules\/(?:@[^/]+\/)?[^/]+\/package\.json$/.test(file.path));

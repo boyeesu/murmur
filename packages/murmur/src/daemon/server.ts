@@ -11,19 +11,25 @@ import { PROTOCOL_VERSION, TOOLS, assert, authorizeProject, authorizeSession, ca
 import type { Mutation, Principal, Tool } from '../protocol/index.js';
 import { discoverProject, normalizeResources } from '../workspaces/identity.js';
 import { prepareStateDirectory, stateIdentity, statePort } from './config.js';
+import { publishPublicConnection } from './connection.js';
+import { connectionQuery } from './connections.js';
+import { ENROLLMENT_MAX_BYTES } from '../protocol/external.js';
+import type { ExternalOperation } from '../protocol/external.js';
 
 function reply(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   response.end(JSON.stringify(payload));
 }
-async function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readBody(request: IncomingMessage, maximum = 65536): Promise<Record<string, unknown>> {
   assert(request.headers['content-type']?.split(';')[0].trim() === 'application/json', 'Content-Type must be application/json.', 'UNSUPPORTED_MEDIA_TYPE', 415);
+  const declared = request.headers['content-length'];
+  assert(declared === undefined || /^\d+$/.test(declared) && Number(declared) <= maximum, 'Request body exceeds the allowed size.', 'BODY_TOO_LARGE', 413);
   let size = 0;
   const chunks: Buffer[] = [];
-  for await (const part of request) {
+  for await (const part of request.iterator({ destroyOnReturn: false })) {
     const chunk = Buffer.from(part);
     size += chunk.length;
-    assert(size <= 65536, 'Request body exceeds 64 KiB.', 'BODY_TOO_LARGE', 413);
+    assert(size <= maximum, maximum === 65536 ? 'Request body exceeds 64 KiB.' : 'Enrollment request body exceeds 16 KiB.', 'BODY_TOO_LARGE', 413);
     chunks.push(chunk);
   }
   let parsed: unknown;
@@ -49,6 +55,7 @@ export async function startDaemon(inputDirectory: string) {
   let closing = false;
   let ready = false;
   let services: ExtendedServices | undefined;
+  let publicConnection: Awaited<ReturnType<typeof publishPublicConnection>> | undefined;
   const browser = new BrowserAccess();
   let closePromise: Promise<void> | undefined;
   const active = new Set<Promise<void>>();
@@ -77,6 +84,7 @@ export async function startDaemon(inputDirectory: string) {
         const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
         if (descriptor.instanceId === instanceId) await unlink(descriptorPath);
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      await publicConnection?.release();
       store?.close();
       store = undefined;
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -106,6 +114,25 @@ export async function startDaemon(inputDirectory: string) {
         const body = await readBody(request);
         reply(response, 200, browser.exchange(text(body.code, 'code', 64))); return;
       }
+      if (url.pathname === '/v1/enrollment/requests' || url.pathname === '/v1/enrollment/status') {
+        assert(request.method === 'POST', 'Enrollment requires POST.', 'METHOD_NOT_ALLOWED', 405);
+        assert(origin === undefined, 'Enrollment is not a browser interface.', 'FORBIDDEN', 403);
+        checkManagedIdentity();
+        connectionQuery(url, []);
+        const body = await readBody(request, ENROLLMENT_MAX_BYTES);
+        if (url.pathname === '/v1/enrollment/requests') {
+          assert(request.headers.authorization === undefined, 'Enrollment submits hashes, not bearer authority.', 'FORBIDDEN', 403);
+          const key = text(request.headers['idempotency-key'], 'Idempotency-Key', 128);
+          assert(/^[a-zA-Z0-9_.:-]+$/.test(key), 'Invalid Idempotency-Key.');
+          reply(response, 200, services!.external.createEnrollment(body, key));
+        } else {
+          assert(Object.keys(body).length === 1 && Object.hasOwn(body, 'requestId'), 'Enrollment status accepts only a request reference.', 'CONNECTION_INPUT');
+          const proof = request.headers.authorization;
+          assert(typeof proof === 'string' && proof.startsWith('Bearer ') && proof.length <= 256, 'A request polling proof is required.', 'UNAUTHORIZED', 401);
+          reply(response, 200, services!.external.pollStatus({ requestId: body.requestId, pollSecret: proof.slice(7) }));
+        }
+        return;
+      }
       const authorization = request.headers.authorization;
       assert(typeof authorization === 'string' && authorization.startsWith('Bearer ') && authorization.length <= 256, 'Bearer authentication required.', 'UNAUTHORIZED', 401);
       const credential = authorization.slice(7);
@@ -124,6 +151,30 @@ export async function startDaemon(inputDirectory: string) {
         assert(/^[a-zA-Z0-9_.:-]+$/.test(controlKey), 'Invalid Idempotency-Key.');
         reply(response, 200, services!.launches.control(action as 'claim' | 'started' | 'heartbeat' | 'end', credential, controlBody, controlKey)); return;
       }
+      const externalPrincipal = await services!.external.authenticateExternal(credential);
+      if (externalPrincipal) {
+        assert(origin === undefined, 'External clients use the scoped non-browser interface.', 'FORBIDDEN', 403);
+        checkManagedIdentity();
+        assert(url.pathname.startsWith('/v1/external/'), 'This capability cannot use general Murmur endpoints.', 'EXTERNAL_FORBIDDEN', 403);
+        const operation = url.pathname.slice('/v1/external/'.length) as ExternalOperation;
+        const reads: ExternalOperation[] = ['identity', 'context', 'member-status'];
+        const writes: ExternalOperation[] = ['intent', 'task-status', 'check-plan', 'propose-decision', 'reserve', 'release', 'leave'];
+        assert(reads.includes(operation) || writes.includes(operation), 'Unknown external operation.', 'NOT_FOUND', 404);
+        connectionQuery(url, operation === 'context' ? ['after'] : []);
+        if (reads.includes(operation)) {
+          assert(request.method === 'GET', 'External reads require GET.', 'METHOD_NOT_ALLOWED', 405);
+          const payload = operation === 'context' ? { after: integer(Number(url.searchParams.get('after') ?? 0), 'after', 0, Number.MAX_SAFE_INTEGER) } : {};
+          reply(response, 200, await services!.external.dispatch(operation, payload, externalPrincipal));
+        } else {
+          assert(request.method === 'POST', 'External mutations require POST.', 'METHOD_NOT_ALLOWED', 405);
+          const body = await readBody(request);
+          const key = text(request.headers['idempotency-key'], 'Idempotency-Key', 128);
+          assert(/^[a-zA-Z0-9_.:-]+$/.test(key), 'Invalid Idempotency-Key.');
+          reply(response, 200, await services!.external.dispatch(operation, body, externalPrincipal, key));
+        }
+        return;
+      }
+      assert(!url.pathname.startsWith('/v1/external/'), 'A current external capability is required.', 'EXTERNAL_UNAUTHORIZED', 401);
       let managedSessionId: string | undefined;
       let principal: Principal;
       if (matches(credential, token)) {
@@ -176,6 +227,7 @@ export async function startDaemon(inputDirectory: string) {
         throw new MurmurError('Unknown endpoint.', 'NOT_FOUND', 404);
       }
       assert(request.method === 'POST', 'Method not supported.', 'METHOD_NOT_ALLOWED', 405);
+      if (url.pathname.startsWith('/v1/groups/') || url.pathname.startsWith('/v1/connections/')) connectionQuery(url, []);
       const body = await readBody(request);
       if (managedSessionId) services!.launches.authorizeAgent(managedSessionId, 'POST', url, body);
       const key = text(request.headers['idempotency-key'], 'Idempotency-Key', 128);
@@ -249,7 +301,10 @@ export async function startDaemon(inputDirectory: string) {
       reply(response, 200, result);
     } catch (error) {
       if (response.destroyed || response.writableEnded) return;
-      if (error instanceof MurmurError) reply(response, error.status, { error: { code: error.code, message: error.message, details: error.details } });
+      if (error instanceof MurmurError) {
+        if (error.code === 'BODY_TOO_LARGE') { response.setHeader('Connection', 'close'); response.once('finish', () => request.destroy()); }
+        reply(response, error.status, { error: { code: error.code, message: error.message, details: error.details } });
+      }
       else reply(response, 500, { error: { code: 'INTERNAL_ERROR', message: 'Unexpected local failure. Inspect current status before retrying.' } });
     }
   }
@@ -266,10 +321,11 @@ export async function startDaemon(inputDirectory: string) {
     store = new CoordinationStore(path.join(directory, 'state.sqlite'));
     services = new ExtendedServices(store, directory, { origin: `http://${host}`, stateId: stateIdentity(directory), instanceId });
     await services.initialize();
-    ready = true;
+    publicConnection = await publishPublicConnection(directory, { protocolVersion: PROTOCOL_VERSION, origin: `http://${host}`, stateId: stateIdentity(directory), instanceId });
     const descriptor = { protocolVersion: PROTOCOL_VERSION, instanceId, stateId: stateIdentity(directory), port, pid: process.pid, token };
     await writeFile(temporaryDescriptor, JSON.stringify(descriptor), { mode: 0o600, flag: 'wx' });
     await rename(temporaryDescriptor, descriptorPath);
+    ready = true;
     return { port, instanceId, directory, close };
   } catch (error) {
     await close();

@@ -10,13 +10,17 @@ import { agentMain } from './agent.js';
 import { runMain } from './run.js';
 import { assert, MurmurError } from '../protocol/index.js';
 
-const help = `Murmur 0.3.0 — scoped MCP and managed launches (native verification is capability-specific)
+const help = `Murmur 0.5.0 — shared work groups and scoped connections (Claude explicit resume supported)
 
 Usage: murmur <command> [options]
 
   run <claude|codex|opencode> --project ID --title TEXT
                                        Create an isolated managed task and launch the tool
   agent <command>                      Scoped commands for managed agent sessions
+  group <action>                       Human-managed shared work groups
+  connect <action>                     Human review, approval, reconnect and revocation
+  external <command>                   Explicitly configured external scoped client
+  native --help                        Report supported native connection entrypoints
   mcp serve                            Official SDK stdio server for managed sessions
   hook <claude|codex> --event EVENT     Advisory scoped native-hook entrypoint
   daemon start                         Run foreground until Ctrl-C
@@ -40,6 +44,14 @@ const knownFlags = new Set(['json', 'help', 'root', 'project', 'tool', 'native-i
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'external') { const { externalMain } = await import('./external.js'); console.log(JSON.stringify(await externalMain(argv.slice(1)), null, 2)); return; }
+  if (argv[0] === 'native') {
+    const { nativeMain } = await import('../adapters/existing-chat.js');
+    // nativeMain already returns the host hook schema. Do not wrap it in a result
+    // envelope or pretty-print it past the native adapter's UTF-8 output budget.
+    process.stdout.write(`${JSON.stringify(await nativeMain(argv.slice(1)))}\n`);
+    return;
+  }
   if (argv[0] === 'mcp') { const { mcpMain } = await import('./mcp.js'); await mcpMain(argv.slice(1)); return; }
   if (argv[0] === 'hook') { const { hookMain } = await import('./hook.js'); await hookMain(argv.slice(1)); return; }
   if (argv[0] === 'agent') {
@@ -48,6 +60,13 @@ async function main(): Promise<void> {
     return;
   }
   requireHumanEnvironment();
+  if (argv[0] === 'group' || argv[0] === 'connect') {
+    const module = argv[0] === 'group' ? await import('./group.js') : await import('./connect.js');
+    const run = 'groupMain' in module ? module.groupMain : module.connectMain;
+    const output = await run(argv.length === 1 ? ['--help'] : argv.slice(1));
+    console.log(typeof output === 'string' ? output : JSON.stringify(output, null, 2));
+    return;
+  }
   if (argv[0] === 'run') { process.exitCode = await runMain(argv.slice(1)); return; }
   if (!argv.length || argv.includes('--help') || argv[0] === 'help') { console.log(help); return; }
   const positional: string[] = [];
@@ -94,7 +113,7 @@ async function main(): Promise<void> {
       for (const project of status.projects) console.log(`\n${project.id}  ${project.mode === 'git' ? 'Git' : 'ADVISORY ONLY'}  ${project.root}`);
       for (const session of status.sessions) {
         const launch = status.launches?.find((item: { sessionId: string }) => item.sessionId === session.id);
-        const activity = launch ? `managed ${launch.state}; ${launch.bridgeLastSeenAt ? 'scoped bridge used' : 'no bridge use observed'}` : status.now - session.lastSeenAt > 120000 ? 'stale (no heartbeat)' : 'manual registration';
+        const activity = launch ? `managed ${launch.state}; ${launch.bridgeLastSeenAt ? 'scoped bridge used' : 'no bridge use observed'}` : session.credentialMode === 'external' ? 'external scoped participation; inspect connect grants for approval/expiry (not native process liveness)' : status.now - session.lastSeenAt > 120000 ? 'stale (no heartbeat)' : 'manual registration';
         console.log(`  session ${session.id}  ${session.tool}  ${activity}`);
       }
       for (const task of status.tasks) console.log(`  task ${task.id}  ${task.status}  ${task.title}`);
@@ -106,7 +125,7 @@ async function main(): Promise<void> {
     let daemon: unknown;
     try { daemon = { status: 'connected', ...await request(directory, 'GET', '/health') }; }
     catch (error) { daemon = { status: 'unavailable', reason: (error as Error).message }; }
-    output = { runtime: process.version, stateDirectory: directory, daemon, adapters: await adapterDiagnostics(), releaseGate: 'UNMET: scoped CLI launches are implemented; MCP, native hooks, and live four-tool verification remain incomplete' };
+    output = { runtime: process.version, stateDirectory: directory, daemon, adapters: await adapterDiagnostics(), releaseGate: 'Groups, scoped MCP and external protocol are implemented. Claude 2.1.247 explicit plugin/resume connection is supported. Hot attachment, other native adapters and four-tool live verification remain incomplete.' };
   } else if (command === 'session register') {
     output = await post('/v1/sessions', { projectId: required('project'), tool: required('tool'), workspaceRoot: flags.get('root') ?? process.cwd(), nativeId: flags.get('native-id') ?? randomUUID(), instanceId: flags.get('instance') ?? randomUUID() });
   } else if (command === 'task create') {
