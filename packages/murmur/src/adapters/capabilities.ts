@@ -17,9 +17,10 @@ export async function adapterDiagnostics() {
         try { await access(filename, constants.X_OK); executables.push(filename); break; } catch { /* Not on this PATH. */ }
       }
     }
-    const managedLaunch = application.tool === 'claude' || application.tool === 'codex';
-    return { ...application, executables, implementation: { managedLaunch, scopedCliBridge: managedLaunch, startupBriefing: managedLaunch, mcp: false, nativeHooks: false }, status: 'unverified', configured: false, connected: false, verified: false,
+    const managedLaunch = ['claude','codex','opencode'].includes(application.tool);
+    const mcp = application.tool === 'claude' || application.tool === 'codex';
+    return { ...application, executables, implementation: { managedLaunch, scopedCliBridge: managedLaunch, startupBriefing: managedLaunch, mcp, advisoryHookCommand: mcp, nativeHookConfiguration: application.tool === 'claude', standaloneRequired: application.tool === 'opencode' }, status: 'unverified', configured: null, connected: null, verified: false,
       capabilities: { sessionIdentity: false, contextInjection: false, preWriteCheck: false, postWriteObservation: false, workspaceLaunch: false, mcpTools: false },
-      note: managedLaunch ? 'Managed CLI launch and scoped command implementations are available. Native MCP/hooks and real model-driven use are not verified by binary detection or heartbeat.' : 'No managed launcher for this tool yet. Binary detection is not a connection or verification.' };
+      note: managedLaunch ? 'Implementation availability is separate from native verification. Doctor does not inspect live launch-local configuration or connections. OpenCode is CLI-only/standalone; Codex automatic hook configuration is gated. Binary detection and heartbeat do not prove model use.' : 'No managed launcher for this tool yet. Binary detection is not a connection or verification.' };
   }));
 }

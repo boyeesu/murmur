@@ -1,6 +1,6 @@
 {
   "name": "murmur-local",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Local task coordination, decision awareness, and safe Git integration",
   "license": "MIT",
@@ -26,5 +26,13 @@
   ],
   "scripts": {
     "build": "node ../../scripts/build.mjs"
-  }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "bundledDependencies": [
+    "@modelcontextprotocol/sdk",
+    "zod"
+  ]
 }

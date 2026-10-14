@@ -7,8 +7,9 @@ commands. The original human-operated workflow remains available.
 
 **The practical distinction:** managed launchers supply initial context and a
 scoped command interface, but agents must invoke it for later updates. Murmur does
-not discover existing sessions or guarantee per-turn injection. MCP and native
-hooks are still absent; Cursor/OpenCode use the manual workflow for now.
+not discover existing sessions or guarantee per-turn injection. The official MCP bridge and advisory hook commands are available, but native
+configuration/verification differs by tool. Existing sessions are not discovered
+automatically; see the capability matrix for remaining gates.
 
 ## Start with the right mental model
 
@@ -33,7 +34,7 @@ editing and reviewed Git integration.
 ## What you need
 
 - A local computer with Node.js and Git.
-- The source folder or the supplied `murmur-local-0.2.0.tgz` package.
+- The source folder or the supplied `murmur-local-0.3.0.tgz` package.
 - A Git-backed project **with at least one commit** for workspace isolation and
   integration. An ordinary folder
   can use task/decision coordination, but not the Git workflow.
@@ -50,9 +51,9 @@ sandboxes and sessions on other machines are not connected.
 
 Choose **one** installation method.
 
-**Upgrading from 0.1:** stop the old daemon and privately back up its complete state
-directory before starting 0.2. The new credential-mode migration preserves manual
-sessions, but older binaries cannot open the upgraded database. Never put the
+**Upgrading:** stop the old daemon and privately back up its complete state
+directory before starting a new version. The migrations preserve existing session and launch data, but older binaries
+may not open the upgraded database. Never put the
 backup, which can contain credentials and uncommitted workspaces, in a public repo.
 
 ### Run from source
@@ -61,7 +62,7 @@ Open a terminal in the Murmur source folder—the folder containing its `package
 This is not necessarily the application project you want to work on.
 
 ```bash
-npm install --ignore-scripts --offline
+npm ci --ignore-scripts
 ```
 
 ```bash
@@ -92,7 +93,7 @@ or editor for the coding agent later.
 From the folder containing the downloaded `.tgz` file:
 
 ```bash
-npm install --global --ignore-scripts --offline ./murmur-local-0.2.0.tgz
+npm install --global --ignore-scripts --offline ./murmur-local-0.3.0.tgz
 ```
 
 Use a user-managed Node installation. If global installation requires permissions
@@ -142,7 +143,7 @@ For parallel work on one repository, use its worktrees so they share the same lo
 Git common directory. Independent clones—even of the same remote URL—are treated
 as separate local projects in this release.
 
-## Optional: launch a new Claude Code or Codex task
+## Optional: launch a managed task
 
 After registering a Git project, you can replace manual task/owner/workspace setup
 with a managed launch. Use the project ID returned by `init` or shown in the dashboard:
@@ -184,9 +185,53 @@ submission, validation, and integration steps below. For launch failures, inspec
 the printed request/task/workspace identifiers rather than repeating with a new
 request ID: an ambiguous spawn is deliberately not repeated automatically.
 
+### Opt into MCP and context hooks
+
+The normal scoped CLI bridge remains the default. For Claude, an experimental
+MCP-and-hook launch is:
+
+```bash
+murmur run claude --project PROJECT_ID --title "Implement password reset" --bridge mcp --context-hooks
+```
+
+For Codex:
+
+```bash
+murmur run codex --project PROJECT_ID --title "Build account settings" --bridge mcp
+```
+
+The launcher creates private configuration containing environment references,
+not credentials. It does not install a global MCP server or rewrite project
+settings. Do not manually add `murmur mcp serve` as an unscoped global server—it
+requires the managed launch connection and refuses administrative discovery.
+
+Native trust/approval rules still apply. Claude hook context is advisory;
+PreToolUse feedback does not undo or guarantee replanning of the selected call.
+Codex's hook command supports the documented envelope, but automatic Codex hook
+configuration is disabled until safe merge/trust behavior is established.
+A requested integration failing does not silently select another bridge mode.
+
+Static configs are cleaned only when unchanged and owned by the launch. Dynamic
+hook cache or modified/unknown files may be retained privately. This does not
+remove the source workspace or prove native/model consumption of context.
+
+See [MCP tools](mcp.md), [native integration limits](native-integrations.md), and
+[advisory hooks](context-hooks.md). Source builds need their pinned dependencies;
+local archives produced by `npm run pack` include the verified runtime closure.
+
 See [managed launch details](managed-launch.md), [the scoped commands](agent-bridge.md),
 and [verification limits](verification.md). Fake-process/contract tests are not
 proof of real model behavior; the release checklist retains that gate.
+
+OpenCode V2 can be started through the CLI-only fallback:
+
+```bash
+murmur run opencode --project PROJECT_ID --title "Add regression tests"
+```
+
+It requires V2 `--standalone`/`--prompt` support and refuses MCP or context-hook
+flags before preparation. Its native session identity and descendant cleanup are
+not claimed verified by CLI help or fake-process tests. See [OpenCode details](opencode.md).
 
 The following sections describe the manual fallback, which remains useful for
 existing sessions and tools without a managed launcher.

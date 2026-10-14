@@ -7,7 +7,7 @@ current remote runtime results, see [GitHub Actions](https://github.com/boyeesu/
 
 ## Automated results
 
-The consolidated `npm test` suite passes **152 tests, 0 failures**. This is a
+The latest consolidated `npm run check` passes strict TypeScript checking and **236 tests, 0 failures**. This is a
 recorded local run, not a substitute for rerunning after changes.
 
 Verified with real SQLite, HTTP, child CLI processes and disposable Git repos:
@@ -124,3 +124,54 @@ migration, real HTTP composition, and fake-native process tests.
 **Not claimed:** real Claude/Codex model-driven coordination, native hooks, MCP
 transport, Cursor/OpenCode launchers, static TypeScript checking, Node 24/Linux
 execution, or a public release. Package/doc access restrictions were not bypassed.
+
+## Scoped MCP integration verification (2026-10-13)
+
+The new consolidated `npm run check` passes strict TypeScript 7.0.2 checking with
+Node 24.19.2 declarations, then **236 runtime/SDK tests** on Node 26.4.0/macOS.
+The SDK is 1.32.1 and zod is 4.6.7; all are pinned. Earlier missing-compiler and
+missing-SDK notes above describe historical checkpoints, not current local state.
+
+New evidence includes official SDK initialization/tool discovery/mappings against
+a real fixture daemon, strict unknown-field rejection, credential-safe validation
+and protocol errors, cancellation, bounded startup/stdio, and EOF/signal cleanup.
+A production managed launch test uses fake Claude/Codex hosts, actual generated
+configuration, real SDK clients and the real hook command. It is not a model trial.
+
+Advisory hook tests cover all supported envelopes, workspace/native identity
+checks, private bounded cache state, stdout-before-cache ordering, deduplication,
+malformed/oversized/stalled input and safe failure without permission fields.
+OpenCode V2 tests cover CLI-only standalone invocation and a transactional launch
+schema migration preserving live/terminal credentials, deadlines, indexes and
+revocations. MCP/plugin support for OpenCode remains gated.
+
+Packaging initially exposed npm workspace bundling omissions. The dedicated pack
+script now physically stages npm's installed runtime graph, preserves and verifies
+its dependency/peer edges, then lets npm create the archive. Offline installation
+validated 95 runtime package locations and their licenses, SDK transitive loads,
+and the actual installed MCP module with an SDK handshake. No dependency/vendor
+files or the installed tree were modified to make the test pass.
+
+The installed native contract probes passed without model conversations. Claude
+consumed the generated MCP config far enough for authenticated scoped identity
+access, but no native completed-connection status was confirmed in the no-input
+window. The final SessionStart probe observed command invocation, valid scoped context
+generation and the corresponding native hook event. Its corrected criterion used
+the fixture title/envelope rather than UUIDs deliberately removed by the privacy filter.
+No user prompts, permission bypasses, global configuration changes, or real model
+trials were used. Remaining native evidence is reported conservatively.
+
+The Cursor CLI is still absent. Codex automatic hook configuration is intentionally
+disabled while merge/trust preservation is unverified. OpenCode configuration
+isolation/V2 plugins and managed resume remain incomplete. Linux/Node24 CI is
+configured but has not been remotely verified in this session. Git metadata writes
+remain blocked here; working-tree changes have not been committed or pushed.
+
+### Native SessionStart probe result
+
+The final corrected Claude 2.1.247 probe observed all three independently:
+command fired, valid scoped advisory context generated, and the matching native
+hook event. No model input was sent, normal guards/permissions remained intact,
+and all owned processes/configs/fixture state were cleaned. Model consumption was
+not tested. The production redactor and binding checks were not weakened to make
+this pass; only the probe's impossible raw-UUID expectation was corrected.

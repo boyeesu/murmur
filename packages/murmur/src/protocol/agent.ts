@@ -6,7 +6,7 @@ export const STATE_HEADER = 'X-Murmur-State-Id';
 export const PROTOCOL_HEADER = 'X-Murmur-Protocol-Version';
 export const HEARTBEAT_MS = 30000;
 export const MANAGED_TTL_MS = 120000;
-export type LaunchTool = 'claude' | 'codex';
+export type LaunchTool = 'claude' | 'codex' | 'opencode';
 export type LaunchState = 'preparing' | 'prepared' | 'claimed' | 'running' | 'ended' | 'failed' | 'expired' | 'recovery_required';
 export type AgentConnection = {
   protocolVersion: number; origin: string; stateId: string; launchId: string;

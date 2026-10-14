@@ -1,8 +1,9 @@
 # What is left before releasing Murmur?
 
-The local workbench now includes a **managed CLI launch increment for Claude Code
-and Codex**. It automates new-session setup and initial context with scoped commands.
-Official MCP/native hooks, the other two launchers, and live four-tool verification
+The local workbench now includes a **managed CLI launch increment for Claude Code, Codex,
+and OpenCode V2**. It automates new-session setup and initial context with scoped commands.
+The official MCP server and advisory hook commands are implemented, but remaining
+native configuration, Cursor support, restricted resume, and live four-tool verification
 are still missing, so this is not yet the four-tool release.
 
 ## 1. Automatic participation — highest priority
@@ -12,7 +13,7 @@ are still missing, so this is not yet the four-tool release.
 - [x] Add managed expiry/end semantics that preserve task intent and source work.
 - [ ] Verify the managed flow with real model-driven sessions, not only fake executables.
 
-- [ ] Implement the official MCP bridge with an explicit project/session identity.
+- [x] Implement the official MCP bridge with an explicit project/session identity.
       It must not fall back to the human/admin credential.
 - [ ] Implement Claude Code, Codex, Cursor, and OpenCode adapters against verified,
       versioned integration contracts. Binary detection is not connection or verification.
@@ -33,8 +34,9 @@ must remain visible; no universal enforcement claim.
 
 ## 2. Engineering and compatibility gates
 
-- [ ] Install/pin the TypeScript compiler, Node declarations, and chosen SDK dependencies.
-- [ ] Pass real static type checking and review dependency licenses/security.
+- [x] Install/pin the TypeScript compiler, Node declarations, and chosen SDK dependencies.
+- [x] Pass real strict type checking and verify bundled dependency/license completeness.
+- [ ] Complete a dependency security/advisory review for release.
 - [ ] Run CI on the declared Node/platform matrix. Current local evidence is macOS
       with Node 26; Node 24 and Linux are not yet release-verified.
 - [ ] Run real application tests, not only JSON fixtures or simulated clients.
@@ -48,7 +50,7 @@ must remain visible; no universal enforcement claim.
 **Done when:** published claims match observed capabilities and supported versions,
 and failures preserve work and explain how to recover.
 
-The existing 152 runtime tests are meaningful evidence for the local coordination
+The existing automated runtime and SDK tests are meaningful evidence for the local coordination
 and Git workflow. They do not establish native integration correctness or static
 type safety. Moving the working browser-native UI to React is not itself a release
 gate; delivering reliable behavior and maintainable checks is.

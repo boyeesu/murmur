@@ -193,7 +193,7 @@ export class AgentClient {
     return this.#post('/v1/submissions', input, key);
   }
 
-  async #post(endpoint: string, payload: Record<string, unknown>, key = randomUUID()): Promise<any> {
+  async #post(endpoint: string, payload: Record<string, unknown>, key: string = randomUUID()): Promise<any> {
     assert(typeof key === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(key), 'Invalid agent request ID.', 'AGENT_INPUT');
     const body = canonicalJson(payload);
     assert(Buffer.byteLength(body, 'utf8') <= MAX_REQUEST_BYTES, 'Agent input exceeds 64 KiB.', 'AGENT_INPUT_TOO_LARGE', 413);

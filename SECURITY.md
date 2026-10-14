@@ -33,6 +33,6 @@ reporting channel **without including vulnerability details**.
 - Unknown spawn outcomes are not repeated automatically. Stored PIDs are never
   used to seize or kill unrelated processes. Uncertain source work is retained.
 
-MCP/native hooks, broader lifecycle controls, real model-driven verification,
-static type checking, and additional platform validation remain separate release
-gates. Please avoid claims of universal conflict prevention or guaranteed isolation.
+Remaining native integration/lifecycle controls, real model-driven verification,
+dependency security review and additional platform validation remain release gates.
+Strict local type checking is now part of the standard check command. Please avoid claims of universal conflict prevention or guaranteed isolation.

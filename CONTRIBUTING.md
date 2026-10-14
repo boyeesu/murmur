@@ -13,16 +13,18 @@ macOS; the CI matrix also exercises Node 24 and Linux.
 From the repository root:
 
 ```bash
-npm ci --ignore-scripts --offline
+npm ci --ignore-scripts
 ```
 
 ```bash
 npm test
 ```
 
-The bootstrap has no third-party runtime packages. Its build strips TypeScript
-types; it does **not** perform static type checking. Keep that limitation visible
-until compiler/declaration dependencies and a required typecheck job are added.
+The build strips TypeScript types, while `npm run typecheck` performs real strict
+checking. Run `npm run check` before proposing changes. SDK/schema dependencies
+are pinned; do not modify installed dependencies or weaken strictness to silence
+diagnostics. `npm run pack` stages the runtime closure for an offline-installable
+archive and verifies dependency resolution and license inclusion.
 
 ## Proposing changes
 

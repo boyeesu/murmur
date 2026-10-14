@@ -2,13 +2,13 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { assert, callerId, canonicalJson, integer, MurmurError, object, PROTOCOL_VERSION, requireHuman, text } from '../protocol/index.js';
 import type { Mutation, Principal } from '../protocol/index.js';
 import { HEARTBEAT_MS, MANAGED_TTL_MS } from '../protocol/agent.js';
-import type { AgentConnection, AgentIdentity, LaunchPreparation, LaunchStatus, SupervisorConnection } from '../protocol/agent.js';
+import type { AgentConnection, AgentIdentity, LaunchPreparation, LaunchStatus, LaunchTool, SupervisorConnection } from '../protocol/agent.js';
 import type { CoordinationStore } from '../storage/store.js';
 import type { GitWorkflow } from '../integration/workflow.js';
 import type { CoordinationService } from './coordination.js';
 
 type Runtime = { origin: string; stateId: string; instanceId: string };
-type PrepareInput = { projectId: string; tool: 'claude' | 'codex'; title: string; featureKey: string | null; baseRevision?: string; allowDirtyBase?: boolean };
+type PrepareInput = { projectId: string; tool: LaunchTool; title: string; featureKey: string | null; baseRevision?: string; allowDirtyBase?: boolean };
 type LaunchRow = LaunchStatus & {
   requestCaller: string; requestKey: string; requestDigest: string; preparationInstanceId: string; phase: string;
   agentHash: string | null; agentToken: string | null; supervisorHash: string | null; supervisorToken: string | null;
@@ -45,6 +45,75 @@ function publicStatus(row: LaunchRow): LaunchStatus {
   };
 }
 
+const launchSchemaSql = 'CREATE TABLE murmur_launch_schema (name TEXT PRIMARY KEY, version INTEGER NOT NULL)';
+const launchIndexes = [
+  'CREATE INDEX murmur_launch_deadlines ON murmur_launches(state, expiresAt)',
+  'CREATE INDEX murmur_launch_project ON murmur_launches(projectId, createdAt)',
+];
+function launchTableSql(name: string, version: 1 | 2): string {
+  return `CREATE TABLE ${name} (
+    id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), tool TEXT NOT NULL CHECK(tool IN (${version === 1 ? "'claude','codex'" : "'claude','codex','opencode'"})),
+    title TEXT NOT NULL, featureKey TEXT, state TEXT NOT NULL CHECK(state IN ('preparing','prepared','claimed','running','ended','failed','expired','recovery_required')),
+    sessionId TEXT UNIQUE REFERENCES sessions(id), taskId TEXT UNIQUE REFERENCES tasks(id), workspaceId TEXT,
+    workspaceRoot TEXT, baseSha TEXT, nativeSessionId TEXT, nativeIdentitySource TEXT NOT NULL,
+    lifecycleRevision INTEGER NOT NULL DEFAULT 0, expiresAt INTEGER, controllerId TEXT, pid INTEGER,
+    createdAt INTEGER NOT NULL, startedAt INTEGER, endedAt INTEGER, exitCode INTEGER, errorCode TEXT, bridgeLastSeenAt INTEGER,
+    requestCaller TEXT NOT NULL, requestKey TEXT NOT NULL, requestDigest TEXT NOT NULL, preparationInstanceId TEXT NOT NULL,
+    phase TEXT NOT NULL, agentHash TEXT, agentToken TEXT, supervisorHash TEXT, supervisorToken TEXT,
+    briefing TEXT, bridgeFirstSeenAt INTEGER, endReason TEXT, UNIQUE(requestCaller, requestKey)
+  )`;
+}
+function normalizedSchema(sql: string): string {
+  // SQLite quotes the table name after RENAME; otherwise only normalize formatting
+  // emitted by our own DDL. Unknown columns/constraints require an explicit migration.
+  return sql.trim().replace(/;$/, '').replace(/\s+/g, ' ')
+    .replace(/^CREATE TABLE "(murmur_launches|murmur_launch_schema)"/, 'CREATE TABLE $1');
+}
+function validateLaunchTable(store: CoordinationStore, version: 1 | 2): void {
+  const table = store.db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'murmur_launches'").get();
+  assert(typeof table?.sql === 'string' && normalizedSchema(table.sql) === normalizedSchema(launchTableSql('murmur_launches', version)),
+    'Unrecognized launch table schema; no automatic schema rewrite is safe.', 'LAUNCH_SCHEMA_INVALID');
+  const indexes = store.db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'murmur_launches' AND sql IS NOT NULL").all();
+  for (const sql of launchIndexes) assert(indexes.some(index => typeof index.sql === 'string' && normalizedSchema(index.sql) === normalizedSchema(sql)),
+    'Required launch index is missing or changed.', 'LAUNCH_SCHEMA_INVALID');
+}
+/** Runs inside the constructor's IMMEDIATE transaction, never base-store user_version. */
+function initializeLaunchSchema(store: CoordinationStore): void {
+  store.db.exec(launchSchemaSql.replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
+  const metadata = store.db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'murmur_launch_schema'").get();
+  assert(typeof metadata?.sql === 'string' && normalizedSchema(metadata.sql) === normalizedSchema(launchSchemaSql),
+    'Unrecognized launch schema metadata.', 'LAUNCH_SCHEMA_INVALID');
+  const schema = store.db.prepare("SELECT version FROM murmur_launch_schema WHERE name = 'launches'").get();
+  assert(!schema || schema.version === 1 || schema.version === 2, 'Unsupported launch schema version.', 'SCHEMA_TOO_NEW');
+  if (!schema) {
+    // No IF NOT EXISTS: an unversioned pre-existing launch table must fail closed.
+    store.db.exec(launchTableSql('murmur_launches', 2));
+    for (const sql of launchIndexes) store.db.exec(sql);
+    store.db.exec("INSERT INTO murmur_launch_schema (name, version) VALUES ('launches', 2)");
+  } else if (schema.version === 1) {
+    validateLaunchTable(store, 1);
+    // DROP must not cascade into an extension table. Unknown triggers may have
+    // side effects when copying/deleting, so require explicit support for those too.
+    const dependent = store.db.prepare(`SELECT 1 FROM sqlite_schema AS s, pragma_foreign_key_list(s.name) AS f
+      WHERE s.type = 'table' AND f."table" = 'murmur_launches' LIMIT 1`).get();
+    const trigger = store.db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'murmur_launches' LIMIT 1").get();
+    assert(!dependent && !trigger, 'Launch schema extensions require an explicit migration.', 'LAUNCH_SCHEMA_INVALID');
+    const indexes = store.db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'murmur_launches' AND sql IS NOT NULL ORDER BY name").all();
+    const columns = store.db.prepare('PRAGMA table_info(murmur_launches)').all().map(column => `"${column.name}"`).join(',');
+    store.db.exec(launchTableSql('murmur_launches_v2_migration', 2));
+    // Copy every persisted column, including NULL revoked tokens and private cache
+    // fields, without re-preparing or minting credentials. Preserve rowids as well.
+    store.db.exec(`INSERT INTO murmur_launches_v2_migration (rowid,${columns}) SELECT rowid,${columns} FROM murmur_launches`);
+    store.db.exec('DROP TABLE murmur_launches');
+    store.db.exec('ALTER TABLE murmur_launches_v2_migration RENAME TO murmur_launches');
+    for (const index of indexes) store.db.exec(index.sql as string);
+    assert(store.db.prepare('PRAGMA foreign_key_check(murmur_launches)').all().length === 0,
+      'Launch schema migration failed foreign-key validation.', 'LAUNCH_SCHEMA_INVALID');
+    store.db.exec("UPDATE murmur_launch_schema SET version = 2 WHERE name = 'launches'");
+  }
+  validateLaunchTable(store, 2);
+}
+
 /** Human preparation and supervisor liveness, not a process manager or a model sandbox. */
 export class LaunchService {
   private store: CoordinationStore;
@@ -59,25 +128,7 @@ export class LaunchService {
   constructor(store: CoordinationStore, workflow: GitWorkflow, coordination: CoordinationService, runtime: Runtime) {
     this.store = store; this.workflow = workflow; this.coordination = coordination; this.runtime = { ...runtime };
     this.transaction(() => {
-      store.db.exec('CREATE TABLE IF NOT EXISTS murmur_launch_schema (name TEXT PRIMARY KEY, version INTEGER NOT NULL)');
-      const schema = store.db.prepare("SELECT version FROM murmur_launch_schema WHERE name = 'launches'").get();
-      assert(!schema || schema.version === 1, 'Unsupported launch schema version.', 'SCHEMA_TOO_NEW');
-      if (!schema) store.db.exec(`
-        CREATE TABLE murmur_launches (
-          id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), tool TEXT NOT NULL CHECK(tool IN ('claude','codex')),
-          title TEXT NOT NULL, featureKey TEXT, state TEXT NOT NULL CHECK(state IN ('preparing','prepared','claimed','running','ended','failed','expired','recovery_required')),
-          sessionId TEXT UNIQUE REFERENCES sessions(id), taskId TEXT UNIQUE REFERENCES tasks(id), workspaceId TEXT,
-          workspaceRoot TEXT, baseSha TEXT, nativeSessionId TEXT, nativeIdentitySource TEXT NOT NULL,
-          lifecycleRevision INTEGER NOT NULL DEFAULT 0, expiresAt INTEGER, controllerId TEXT, pid INTEGER,
-          createdAt INTEGER NOT NULL, startedAt INTEGER, endedAt INTEGER, exitCode INTEGER, errorCode TEXT, bridgeLastSeenAt INTEGER,
-          requestCaller TEXT NOT NULL, requestKey TEXT NOT NULL, requestDigest TEXT NOT NULL, preparationInstanceId TEXT NOT NULL,
-          phase TEXT NOT NULL, agentHash TEXT, agentToken TEXT, supervisorHash TEXT, supervisorToken TEXT,
-          briefing TEXT, bridgeFirstSeenAt INTEGER, endReason TEXT, UNIQUE(requestCaller, requestKey)
-        );
-        CREATE INDEX murmur_launch_deadlines ON murmur_launches(state, expiresAt);
-        CREATE INDEX murmur_launch_project ON murmur_launches(projectId, createdAt);
-        INSERT INTO murmur_launch_schema VALUES ('launches', 1);
-      `);
+      initializeLaunchSchema(store);
       // A pre-spawn claim cannot establish whether the OS spawn happened. Never issue a replacement claim.
       const interrupted = store.db.prepare("SELECT * FROM murmur_launches WHERE state IN ('preparing','claimed') AND preparationInstanceId != ?").all(runtime.instanceId) as LaunchRow[];
       for (const row of interrupted) {
@@ -139,7 +190,7 @@ export class LaunchService {
     const data: PrepareInput = { projectId: identifier(source.projectId, 'projectId'),
       tool: source.tool as PrepareInput['tool'], title: text(source.title, 'title', 512),
       featureKey: source.featureKey === undefined ? null : text(source.featureKey, 'featureKey', 128).trim().toLowerCase() };
-    assert(data.tool === 'claude' || data.tool === 'codex', 'Only new Claude or Codex tasks can be prepared.');
+    assert(data.tool === 'claude' || data.tool === 'codex' || data.tool === 'opencode', 'Only new Claude, Codex, or OpenCode V2 tasks can be prepared.');
     if (own(source, 'baseRevision')) data.baseRevision = text(source.baseRevision, 'baseRevision', 256);
     if (own(source, 'allowDirtyBase')) {
       assert(typeof source.allowDirtyBase === 'boolean', 'allowDirtyBase must be a boolean.');

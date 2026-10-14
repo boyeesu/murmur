@@ -1,4 +1,4 @@
-name: Runtime checks
+name: Checks
 
 on:
   push:
@@ -8,6 +8,17 @@ permissions:
   contents: read
 
 jobs:
+  typecheck:
+    name: Strict TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
   runtime:
     name: Runtime / ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
@@ -21,7 +32,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm ci --ignore-scripts --offline
+          cache: npm
+      - run: npm ci --ignore-scripts
       - run: npm test
-      # Static checking is not part of this bootstrap job. Add a separate
-      # required typecheck job once compiler/declaration dependencies are pinned.

@@ -10,13 +10,15 @@ import { agentMain } from './agent.js';
 import { runMain } from './run.js';
 import { assert, MurmurError } from '../protocol/index.js';
 
-const help = `Murmur 0.2.0 — managed CLI launches (MCP/native hooks pending)
+const help = `Murmur 0.3.0 — scoped MCP and managed launches (native verification is capability-specific)
 
 Usage: murmur <command> [options]
 
-  run <claude|codex> --project ID --title TEXT
+  run <claude|codex|opencode> --project ID --title TEXT
                                        Create an isolated managed task and launch the tool
   agent <command>                      Scoped commands for managed agent sessions
+  mcp serve                            Official SDK stdio server for managed sessions
+  hook <claude|codex> --event EVENT     Advisory scoped native-hook entrypoint
   daemon start                         Run foreground until Ctrl-C
   daemon stop                          Stop the local service
   init [--root PATH]                   Register a Git project or advisory folder
@@ -38,6 +40,8 @@ const knownFlags = new Set(['json', 'help', 'root', 'project', 'tool', 'native-i
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'mcp') { const { mcpMain } = await import('./mcp.js'); await mcpMain(argv.slice(1)); return; }
+  if (argv[0] === 'hook') { const { hookMain } = await import('./hook.js'); await hookMain(argv.slice(1)); return; }
   if (argv[0] === 'agent') {
     const result = await agentMain(argv.slice(1));
     console.log(JSON.stringify(result, null, 2));

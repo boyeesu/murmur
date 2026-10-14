@@ -31,7 +31,7 @@ for (const file of ['LICENSE', 'README.md']) {
   await cp(fileURLToPath(new URL(`../${file}`, import.meta.url)), path.join(output, '..', file));
 }
 
-const documentation = ['user-guide.md', 'release-checklist.md', 'coordination.md', 'workflow.md', 'protocol.md', 'support-matrix.md', 'verification.md', 'agent-bridge.md', 'managed-launch.md', 'launch-service.md'];
+const documentation = ['user-guide.md', 'release-checklist.md', 'coordination.md', 'workflow.md', 'protocol.md', 'support-matrix.md', 'verification.md', 'agent-bridge.md', 'managed-launch.md', 'launch-service.md', 'mcp.md', 'context-hooks.md', 'native-integrations.md', 'opencode.md'];
 const packagedDocs = path.join(output, '..', 'docs');
 await mkdir(packagedDocs, { recursive: true });
 for (const file of documentation) {

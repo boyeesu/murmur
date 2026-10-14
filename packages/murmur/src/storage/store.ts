@@ -9,6 +9,7 @@ import type { ProjectIdentity } from '../workspaces/identity.js';
 export type Project = { id: string; root: string; canonicalPath: string; mode: 'git' | 'advisory'; caseSensitive: number; createdAt: number };
 export type Session = { id: string; projectId: string; tool: Tool; nativeId: string; instanceId: string; workspaceRoot: string; revision: number; createdAt: number; lastSeenAt: number; credentialMode: 'manual' | 'managed' };
 export type Task = { id: string; projectId: string; ownerSessionId: string; title: string; featureKey: string | null; status: string; revision: number; createdAt: number };
+export type CoordinationEvent = { sequence: number; projectId: string; type: string; payload: unknown; createdAt: number };
 export type Lease = { id: string; projectId: string; sessionId: string; taskId: string; generation: number; resources: Resource[]; expiresAt: number; releasedAt: number | null };
 const sessionColumns = 'id, projectId, tool, nativeId, instanceId, workspaceRoot, revision, createdAt, lastSeenAt, credentialMode';
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -241,8 +242,8 @@ export class CoordinationStore {
       reservations: this.db.prepare(`SELECT * FROM leases${where} ${where ? 'AND' : 'WHERE'} releasedAt IS NULL AND expiresAt > ? ORDER BY generation`).all(...args, this.now()).map(decodeLease),
     };
   }
-  events(projectId: string, after: number) {
+  events(projectId: string, after: number): CoordinationEvent[] {
     this.project(projectId);
-    return this.db.prepare('SELECT * FROM events WHERE projectId = ? AND sequence > ? ORDER BY sequence LIMIT 500').all(projectId, after).map(row => ({ ...row, payload: JSON.parse(row.payload as string) }));
+    return this.db.prepare('SELECT * FROM events WHERE projectId = ? AND sequence > ? ORDER BY sequence LIMIT 500').all(projectId, after).map(row => ({ sequence: row.sequence as number, projectId: row.projectId as string, type: row.type as string, payload: JSON.parse(row.payload as string) as unknown, createdAt: row.createdAt as number }));
   }
 }
