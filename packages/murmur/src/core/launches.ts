@@ -383,6 +383,12 @@ export class LaunchService {
       'Managed credential no longer owns its bound task and workspace.', 'AGENT_UNAUTHORIZED', 401);
     return { sessionId: row.sessionId!, taskId: row.taskId! };
   }
+  /** Read-only guard safe inside another service's transaction. Never sweeps. */
+  assertAgentBinding(sessionId: string): void {
+    const row = this.store.db.prepare('SELECT * FROM murmur_launches WHERE sessionId = ?').get(sessionId) as LaunchRow | undefined;
+    assert(row, 'Managed launch metadata is missing.', 'AGENT_UNAUTHORIZED', 401);
+    this.bound(row);
+  }
   identity(sessionId: string): AgentIdentity {
     this.sweep();
     const row = this.store.db.prepare('SELECT * FROM murmur_launches WHERE sessionId = ?').get(sessionId) as LaunchRow | undefined;

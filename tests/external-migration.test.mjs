@@ -39,7 +39,7 @@ for (const version of [1, 2]) test(`base v${version} rebuild preserves rowids, c
   const schemas = original.db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE tbl_name!='sessions' ORDER BY type,name").all();
   original.close();
   const migrated = new CoordinationStore(filename); t.after(() => migrated.close());
-  assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version, 4);
   assert.equal(migrated.db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   assert.equal(migrated.db.prepare('SELECT rowid FROM sessions').get().rowid, 91);
   assert.equal(migrated.authenticateSession(f.registered.token).id, f.registered.session.id);
@@ -75,7 +75,7 @@ test('base migration rejects unknown columns, triggers, newer versions and rolls
 test('groups schema is additive independently versioned and fails closed for partial or newer schemas', t => {
   const store = new CoordinationStore(':memory:'); t.after(() => store.close());
   const coordination = new CoordinationService(store); new GroupsService(store, coordination);
-  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 4);
   assert.equal(store.db.prepare('SELECT version FROM murmur_groups_schema').get().version, 1);
   store.db.exec('UPDATE murmur_groups_schema SET version=2');
   assert.throws(() => new GroupsService(store, coordination), { code: 'SCHEMA_TOO_NEW' });

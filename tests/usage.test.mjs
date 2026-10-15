@@ -59,7 +59,7 @@ test('documented request IDs make base CLI registration and task retries determi
     assert.equal(status.sessions.length, 1);
     assert.equal(status.tasks.length, 1);
     const help = await execute(process.execPath, [cli, '--help'], {env, timeout:10000});
-    assert(help.stdout.includes('shared work groups and scoped connections'));
+    assert(help.stdout.includes('reviewed coordination, integration lifecycle and maintenance'));
     assert(help.stdout.includes('group <action>'));
     assert(help.stdout.includes('connect <action>'));
     assert(help.stdout.includes('task abandonment require explicit --confirm'));

@@ -1,6 +1,59 @@
 # Changelog
 
-## 0.5.0 — Claude same-chat connector (unreleased)
+## 0.6.0-alpha.1 — Operations and approved-session automation (unreleased)
+
+This is a local development increment, not a completed four-tool release. GitHub
+publication, live acceptance, current advisories and the full platform matrix are
+still blocked. No npm publication is authorized or claimed.
+
+- Added approved-only Claude prompt and tool-boundary context refresh with bounded
+  deadlines, proof-bound throttling and deduplication. Locally pending, unlinked,
+  expired and left chats do not enroll, poll, activate or create locks automatically.
+- Added a strict actorless native request formatter without credential, filesystem
+  or network authority. It is not registered in native exports. Structured
+  publication remains disabled pending successful native callback verification.
+- Added reviewed integration install/update/uninstall/rollback/recovery and an
+  Operations dashboard. Claude manages private bundles; Codex edits only owned
+  project hooks. Neither native loading nor a connected chat is inferred.
+- Added manual credential revocation and durable rotation, independent revision
+  checks, and fresh capability guards at reads, replay and transaction boundaries.
+- Added exact-preview retention for selected metadata classes with permanent
+  idempotency tombstones. Context, event streams and native briefings disclose gaps.
+- Added consistent private SQLite backup and new-directory-only offline restore.
+  Restored authority is invalidated while source bookkeeping and explicit recovery
+  remain. SQLite compatibility advances to v4; older binaries must refuse it.
+- Added disabled OpenCode/Cursor contracts. Actual OpenCode committed rewind
+  preserves ID and creation time, preventing those fields from proving incarnation.
+- Added npm-backed CycloneDX generation, exact-archive offline verification and
+  guarded, manually triggered prerelease automation. The workflow stays disabled
+  until actions are independently pinned and protected release approval is set up.
+
+- Added a version-scoped **Codex CLI 0.154.0** existing-chat connector with reviewed
+  fixed-hook export, explicit native resume and ordinary `murmur-connect` messages.
+  Human approval remains mandatory. Explicit status/refresh activates the grant;
+  ordinary prompts then refresh already-active context without polling approval,
+  creating unlinked helper files or renewing grants. Leave also revokes an approved
+  request before its first local activation. Parent-conversation scope includes
+  Codex subagents, not independent subagent identities.
+- Preserved literal dollar-sign paths when generating either host's hook command.
+  Setup never replaces existing native configuration or bypasses hook trust.
+
+### Verification boundaries
+
+Claude static fixtures verify current hook metadata and observed resume/fork/clear
+identity behavior. Normal native permissions denied the publication probes; no
+successful post-tool publication or tool-context delivery is claimed. Codex's
+historical static-response fixture used hook-trust bypass and a pretrusted project.
+Its identity/context/lifecycle evidence is conditional on that setup, not normal
+interactive activation. The current probe no longer bypasses or preseeds trust.
+
+No real-model workflow completed. Native Claude login is unavailable, the Codex live
+request was network-denied before model events, and Cursor installation is blocked.
+Local Node 26/macOS tests do not prove Node 24/Linux; Docker access is denied.
+Current advisory and GitHub checks remain blocked. See the [support matrix](docs/support-matrix.md),
+[operations](docs/operations.md), and [data lifecycle](docs/data-lifecycle.md).
+
+## 0.5.0 — Claude same-chat connector (local checkpoint)
 
 - Enabled a version-scoped existing-chat connector for **Claude Code 2.1.247 only**.
   A fixed `UserPromptSubmit` hook reads the raw `/murmur:connect` command and current
@@ -37,7 +90,7 @@ The earlier 0.4 nested OS-sandbox preflight denial below remains historical evid
 The later explicit `--lifecycle` run used the existing outer environment and isolated
 configuration/local dummy transport; it did not establish an additional OS sandbox
 or prove absence of Keychain access. Direct hot attachment/reload in an already-open
-chat, other native hosts, broader native MCP behavior, and automatic background
+chat, untested native hosts/versions, broader native MCP behavior, and automatic background
 publication remain unverified/gated. No universal `/murmur` or `@murmur` alias exists.
 
 The 0.5 aggregate test count and package acceptance will be recorded after final

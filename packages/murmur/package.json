@@ -1,6 +1,6 @@
 {
   "name": "murmur-local",
-  "version": "0.5.0",
+  "version": "0.6.0-alpha.1",
   "private": true,
   "description": "Local task coordination, decision awareness, and safe Git integration",
   "license": "MIT",

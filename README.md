@@ -10,7 +10,7 @@
   <a href="https://github.com/boyeesu/murmur/actions/workflows/ci.yml"><img src="https://github.com/boyeesu/murmur/actions/workflows/ci.yml/badge.svg?branch=main" alt="Checks"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/node-%3E%3D24-339933?logo=nodedotjs&logoColor=white" alt="Node.js 24 or later"></a>
-  <a href="https://github.com/boyeesu/murmur/blob/main/CHANGELOG.md"><img src="https://img.shields.io/badge/status-0.5.0%20alpha-orange" alt="Status: 0.5.0 alpha"></a>
+  <a href="https://github.com/boyeesu/murmur/blob/main/CHANGELOG.md"><img src="https://img.shields.io/badge/status-0.6.0--alpha.1%20unreleased-orange" alt="Status: 0.6.0-alpha.1 unreleased"></a>
 </p>
 
 <p>
@@ -29,12 +29,15 @@ changes, and integrate reviewed commits while keeping your original checkout int
 Use its local dashboard and CLI to coordinate work, with opt-in launchers for
 **Claude Code**, **Codex**, and the CLI-only **OpenCode V2** fallback.
 
-> **0.5 alpha:** human-reviewed groups, scoped MCP, and advisory hooks are implemented.
-> **Claude Code 2.1.247** can connect the original conversation through an exported
-> plugin and explicit native resume. Its production connector passed headless native
-> fixture checks, not a real-user/model trial. Direct hot attachment, other native
-> hosts, broader native MCP behavior, and automatic background publication remain
-> gated. Claude/Codex managed MCP and CLI-only OpenCode V2 remain separate modes.
+> **0.6 development alpha, not a published release:** human-reviewed groups,
+> scoped MCP, automatic approved-session context, installation lifecycle, and state
+> maintenance are implemented. **Claude Code 2.1.247** and **Codex CLI 0.154.0** have
+> version-scoped existing-chat flows requiring explicit native activation and human
+> approval. Native fixture evidence is not real-model acceptance. The historical
+> Codex fixture bypassed hook trust and pretrusted its disposable project; normal
+> interactive activation remains unverified. Direct hot attachment, structured
+> existing-chat publication, OpenCode/Cursor attachment and the full four-tool
+> release remain gated. Managed launchers are separate modes.
 > See the [support matrix](docs/support-matrix.md) and [roadmap](#roadmap).
 
 ## Why Murmur?
@@ -70,7 +73,7 @@ Your working branch ← Approved integration ← Submit + validate commits
 ```
 
 The dashboard brings together **Tasks**, **Alerts**, **Decisions**, **Workspaces**,
-**Integration**, **Connections**, and **Adapters**. Murmur observes Git changes every 10 seconds;
+**Integration**, **Connections**, **Operations**, and **Adapters**. Murmur observes Git changes every 10 seconds;
 reservations are advisory and do not replace separate workspaces or code review.
 
 ## Quick start
@@ -225,7 +228,10 @@ In the resumed conversation, use `/murmur:connect start GROUP TITLE | RESPONSIBI
 or `/murmur:connect join INVITE_CODE | RESPONSIBILITY` (a 43-character base64url code).
 Review and approve the exact request and shared handoff in the authenticated Murmur UI,
 then run `/murmur:connect refresh`. `status`, `leave`, and `help` are also supported.
-Refresh is explicit—not automatic background publication or proof of model obedience.
+Explicit refresh activates the approved connection. Subsequent ordinary prompts refresh
+already-active context without enrollment, approval polling or grant renewal. Tool-boundary
+advisory hooks are implemented but native post-tool delivery remains unverified.
+There is no automatic intent publication or proof of model obedience.
 Processes already carrying a managed/external Murmur scope must use their existing
 scoped commands; the hook refuses to create a second connection. There is no universal
 `/murmur` / `@murmur` alias.
@@ -239,7 +245,31 @@ This is not a real-user chat/model trial or direct hot-attachment/reload verific
 The earlier denied nested OS sandbox remains historical evidence; the later runs do
 not prove stronger OS isolation or absence of Keychain access.
 
-Other native hosts remain gated. Use manual groups or export a reviewed handoff for
+### Connect the original Codex conversation
+
+For **Codex CLI 0.154.0**, export reviewed hook setup from a human terminal:
+
+```bash
+murmur connect setup --tool codex --out /absolute/new/codex-export
+```
+
+Follow the exported `SETUP.md`: preserve existing hooks when adding the fixed
+`UserPromptSubmit` entry, pause/exit the original process, resume its original
+conversation, and review native hook trust using `/hooks`. Setup does not install
+or connect anything automatically. In that chat, enter ordinary messages such as
+`murmur-connect start GROUP TITLE | RESPONSIBILITY` or
+`murmur-connect join INVITE_CODE | RESPONSIBILITY`. After human approval, enter
+`murmur-connect refresh` to activate the connection. Later ordinary prompts fetch
+fresh scoped context automatically. `status`, `leave`, and `help` are also available.
+
+The actual CLI and generated hook passed isolated start/approval, exact-thread
+resume, fresh decision delivery into developer-role input, independent same-cwd
+chats, real fork isolation, and leave checks against an owned static responder.
+No real model inference occurred. Interactive hook trust, desktop/web attachment,
+and hot loading into an already-open process remain unverified. See the
+[Codex existing-chat guide](docs/codex-existing-chat.md).
+
+OpenCode, Cursor, and untested native versions remain gated. Use manual groups or export a reviewed handoff for
 a separately launched **new** managed task instead. Handoffs retain reported files
 already changed and a separate remaining-work checklist; neither is filesystem proof
 or automatic completion. See [groups and approved connections](docs/session-linking.md)
@@ -250,7 +280,7 @@ and [the dated native evidence](docs/verification-existing-chats.md).
 | Tool | Managed launch | MCP / native context |
 | --- | --- | --- |
 | Claude Code | Alpha | Opt-in managed MCP/hooks; 2.1.247-only existing-chat plugin + resume connector; real-model use unverified |
-| Codex | Alpha | Opt-in MCP; automatic hook configuration gated |
+| Codex | Alpha | Opt-in managed MCP; 0.154.0 existing-chat reviewed hooks + resume with automatic context refresh; managed automatic hook configuration remains gated |
 | OpenCode V2 | CLI-only alpha, private standalone server | MCP/plugin configuration gated |
 | Cursor | Not implemented; CLI unavailable in current verification environment | Gated |
 | Other folder-capable tools | Manual workspace workflow | Not integrated |
@@ -265,7 +295,10 @@ behavior are not verified capabilities. See the [support matrix](docs/support-ma
 | Guide | What you'll find |
 | --- | --- |
 | [User guide](docs/user-guide.md) | Installation, first run, and the daily workflow |
+| [Operations](docs/operations.md) | Reviewed integration install, update, removal, rollback, and recovery |
+| [Data lifecycle](docs/data-lifecycle.md) | Credentials, retention, consistent private backup, and offline restore |
 | [Groups and session connections](docs/session-linking.md) | Manual groups, human review, fixed-scope grants, reconnect, and replacement handoffs |
+| [Codex existing chats](docs/codex-existing-chat.md) | Reviewed hook setup, same-thread resume and automatic context refresh |
 | [Managed launches](docs/managed-launch.md) | Claude Code/Codex setup and lifecycle |
 | [Agent bridge](docs/agent-bridge.md) | Scoped agent commands and credentials |
 | [MCP](docs/mcp.md) | Official SDK server, tools and transport limits |
@@ -288,10 +321,13 @@ in every terminal.
 Murmur retains source work rather than auto-stashing or auto-committing it.
 Validation commands run with your local-user privileges. Human, managed-agent,
 and external-grant credentials have separate authority; see [SECURITY.md](https://github.com/boyeesu/murmur/blob/main/SECURITY.md).
-Before upgrading, stop the daemon and privately back up its complete state
-directory. Version 0.3 migrated the launch schema; the 0.4 increment adds external
-session and group state while preserving existing records. Older binaries may
-refuse the upgraded database. No downgrade or destructive repair is automatic.
+Before upgrading an older build, stop its daemon and privately back up its complete
+state directory. This increment advances SQLite compatibility to **v4**; older
+binaries must refuse that database. The new maintenance command makes consistent
+private database backups, but those do not include source workspaces or the installer
+registry. Restore is offline, into a new private directory only, and invalidates
+copied credentials. See [data lifecycle](docs/data-lifecycle.md). No downgrade,
+source cleanup, or destructive repair is automatic.
 
 ## Roadmap
 
@@ -301,7 +337,9 @@ refuse the upgraded database. No downgrade or destructive repair is automatic.
 - [x] Official SDK MCP transport, strict schemas and scoped authorization.
 - [x] Advisory context-hook commands and launch-local Claude configuration.
 - [x] Project groups, human-reviewed scoped grants, and reviewed handoff exports.
-- [x] Claude 2.1.247 same-chat plugin/resume connector with native action and fork/clear fixture evidence.
+- [x] Version-scoped Claude and Codex existing-chat flows with separate native evidence limits.
+- [x] Automatic context refresh for explicitly activated, human-approved participants.
+- [x] Reviewed integration lifecycle, credential management, retention, and private backup/restore.
 - [ ] Direct hot attachment/reload, cross-host existing-chat contracts, and automatic background publication.
 - [x] Strict TypeScript checking and dependency-complete local package tests.
 - [ ] Real model-driven, multi-tool acceptance testing.

@@ -29,14 +29,14 @@ test('coordination schema persists independently of base schema and rejects unkn
   const root = await temporary(t), filename = path.join(root, 'coordination.sqlite');
   const first = new CoordinationStore(filename);
   new CoordinationService(first);
-  assert.equal(first.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(first.db.prepare('PRAGMA user_version').get().user_version, 4);
   first.close();
   const reopened = new CoordinationStore(filename);
   t.after(() => reopened.close());
   new CoordinationService(reopened);
   reopened.db.exec('UPDATE murmur_coordination_schema SET version = 2');
   assert.throws(() => new CoordinationService(reopened), { code: 'SCHEMA_TOO_NEW' });
-  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 4);
   reopened.db.exec('UPDATE murmur_coordination_schema SET version = 1');
   new CoordinationService(reopened);
 });
@@ -321,7 +321,7 @@ test('incomplete or unversioned extension tables fail closed without changing th
   assert.throws(() => new CoordinationService(incomplete), { code: 'INVALID_SCHEMA' });
   unversioned.db.exec('CREATE TABLE coordination_intents (placeholder TEXT)');
   assert.throws(() => new CoordinationService(unversioned), { code: 'INVALID_SCHEMA' });
-  assert.equal(unversioned.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(unversioned.db.prepare('PRAGMA user_version').get().user_version, 4);
   assert.equal(unversioned.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'murmur_coordination_schema'").get().n, 0);
 });
 

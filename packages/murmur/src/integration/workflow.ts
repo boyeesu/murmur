@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { assert, authorizeProject, authorizeSession, callerId, canonicalJson, integer, MurmurError, object, requireHuman, text } from '../protocol/index.js';
+import { assert, authorizeMutation, authorizePrincipal, authorizeProject, authorizeSession, callerId, canonicalJson, integer, MurmurError, object, requireHuman, text } from '../protocol/index.js';
 import type { Mutation, Principal } from '../protocol/index.js';
 import type { CoordinationStore, Project } from '../storage/store.js';
 import { resourcesOverlap } from '../workspaces/identity.js';
@@ -97,12 +97,17 @@ export class GitWorkflow {
     return this.store.db.prepare('SELECT * FROM workflow_requests WHERE caller = ? AND key = ?').get(mutation.caller, mutation.key) as Row | undefined;
   }
   private replay(method: string, input: unknown, principal: Principal, mutation: Mutation): { found: boolean; response?: any } {
+    authorizePrincipal(principal); authorizeMutation(mutation);
     assert(mutation.caller === callerId(principal), 'Mutation caller does not match the authenticated principal.', 'FORBIDDEN', 403);
     text(mutation.key, 'idempotency key', 200); text(mutation.operation, 'operation', 200);
     assert(canonicalJson(mutation.input) === canonicalJson(input), 'Mutation payload must match the requested input.', 'INVALID_INPUT');
+    // Permanent retirement wins over the workflow's independently persisted
+    // journal, including results reconstructed by normal crash recovery.
+    const cached = this.store.replay(mutation);
     const row = this.request(mutation);
     if (row) {
       assert(row.digest === hash({ method, operation: mutation.operation, input }), 'Idempotency key was used with different input.', 'IDEMPOTENCY_CONFLICT', 409);
+      if (row.status === 'retired') throw new MurmurError('This workflow request was retired by restore and cannot be replayed. Inspect retained state before making a new request.', 'IDEMPOTENCY_RETIRED', 410);
       if (row.status === 'complete') return { found: true, response: JSON.parse(row.response) };
       if (row.status === 'failed') {
         const error = JSON.parse(row.error);
@@ -110,7 +115,7 @@ export class GitWorkflow {
       }
       throw new MurmurError('This request is in progress or was interrupted. Inspect the recorded entity; use a new key only for an explicit new attempt.', row.status === 'running' ? 'WORKFLOW_IN_PROGRESS' : 'RECOVERY_REQUIRED', 409, { entityKind: row.entityKind, entityId: row.entityId });
     }
-    return this.store.replay(mutation);
+    return cached;
   }
   private entity(mutation: Mutation, kind: string, id: string): void {
     this.store.db.prepare('UPDATE workflow_requests SET entityKind = ?, entityId = ? WHERE caller = ? AND key = ?').run(kind, id, mutation.caller, mutation.key);
@@ -125,6 +130,7 @@ export class GitWorkflow {
       const again = this.replay(method, input, principal, meta);
       if (again.found) return again.response;
       this.transaction(() => {
+        authorizePrincipal(principal); authorizeMutation(meta);
         const busy = this.store.db.prepare("SELECT key FROM workflow_requests WHERE projectId = ? AND status = 'running'").get(projectId);
         assert(!busy, 'Project has a pending workflow operation; reconcile it before continuing.', 'WORKFLOW_BUSY', 409);
         this.store.db.prepare('INSERT INTO workflow_requests(caller,key,digest,projectId,method,status,createdAt) VALUES (?,?,?,?,?,?,?)').run(meta.caller, meta.key, hash({ method, operation: meta.operation, input }), projectId, method, 'running', this.store.now());
@@ -184,6 +190,10 @@ export class GitWorkflow {
       const requests = this.store.db.prepare("SELECT * FROM workflow_requests WHERE status IN ('running','interrupted')").all() as Row[];
       for (const request of requests) {
         if (activeRequests.has(`${request.caller}\0${request.key}`)) continue;
+        if (this.store.db.prepare('SELECT 1 FROM mutation_tombstones WHERE caller=? AND key=?').get(request.caller, request.key)) {
+          this.store.db.prepare("UPDATE workflow_requests SET status='retired',response=NULL,error=NULL WHERE caller=? AND key=?").run(request.caller, request.key);
+          continue;
+        }
         if (request.entityKind === 'job' && this.jobRow(request.entityId).status === 'promoted') {
           this.store.db.prepare("UPDATE workflow_requests SET status = 'complete', response = ? WHERE caller = ? AND key = ?").run(JSON.stringify(this.getJob(request.entityId)), request.caller, request.key);
         } else this.store.db.prepare("UPDATE workflow_requests SET status = 'interrupted' WHERE caller = ? AND key = ?").run(request.caller, request.key);
@@ -394,14 +404,18 @@ export class GitWorkflow {
       await supported(workspace.root, sourceSha);
       await ancestor(project.root, workspace.baseSha, sourceSha);
       const id = randomUUID(), sourceRef = `refs/murmur/changesets/${id}`;
+      authorizePrincipal(principal); authorizeMutation(mutation);
       this.transaction(() => {
+        authorizePrincipal(principal); authorizeMutation(mutation);
         this.store.db.prepare('INSERT INTO workflow_changesets VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(id, task.projectId, task.id, workspace.id, sourceSha, workspace.baseSha, sourceRef, expected + 1, expected, 'pinning', this.store.now());
         this.entity(mutation, 'changeset', id);
       });
+      authorizePrincipal(principal); authorizeMutation(mutation);
       await git(project.root, ['update-ref', '--no-deref', sourceRef, sourceSha, '']);
       await clean(workspace.root);
       assert(await revision(workspace.root, 'HEAD') === sourceSha, 'Source changed during submission; the incomplete pin was retained for inspection.', 'SOURCE_CHANGED', 409);
       return this.transaction(() => {
+        authorizePrincipal(principal); authorizeMutation(mutation);
         const latest = this.store.task(task.id);
         assert(latest.revision === expected && latest.ownerSessionId === current.ownerSessionId && this.attachment(task.id).workspaceId === workspace.id, 'Task changed during submission.', 'STALE_REVISION', 409);
         this.store.db.prepare("UPDATE tasks SET status = 'ready', revision = revision + 1 WHERE id = ?").run(task.id);

@@ -10,7 +10,7 @@ import { agentMain } from './agent.js';
 import { runMain } from './run.js';
 import { assert, MurmurError } from '../protocol/index.js';
 
-const help = `Murmur 0.5.0 — shared work groups and scoped connections (Claude explicit resume supported)
+const help = `Murmur 0.6.0-alpha.1 — reviewed coordination, integration lifecycle and maintenance
 
 Usage: murmur <command> [options]
 
@@ -19,6 +19,8 @@ Usage: murmur <command> [options]
   agent <command>                      Scoped commands for managed agent sessions
   group <action>                       Human-managed shared work groups
   connect <action>                     Human review, approval, reconnect and revocation
+  integrations <action>                Review installation/update/removal plans
+  maintenance <area> <action>           Human credential, retention and backup controls
   external <command>                   Explicitly configured external scoped client
   native --help                        Report supported native connection entrypoints
   mcp serve                            Official SDK stdio server for managed sessions
@@ -36,7 +38,8 @@ Usage: murmur <command> [options]
 
 ${extensionHelp}
 All command output except status is JSON. Session registration prints a private
-session token: do not paste it into public logs. No hooks or settings are installed.
+session token: do not paste it into public logs. Package installation changes no
+native settings. Explicit reviewed integrations apply may edit native hooks.
 Set MURMUR_HOME to a dedicated private directory to override local state storage.
 `;
 const booleanFlags = new Set(['json', 'help', ...extensionBooleans]);
@@ -49,9 +52,11 @@ async function main(): Promise<void> {
     const { nativeMain } = await import('../adapters/existing-chat.js');
     // nativeMain already returns the host hook schema. Do not wrap it in a result
     // envelope or pretty-print it past the native adapter's UTF-8 output budget.
-    process.stdout.write(`${JSON.stringify(await nativeMain(argv.slice(1)))}\n`);
+    const { emitNativeHookOutput } = await import('../adapters/native-chat.js');
+    await emitNativeHookOutput(await nativeMain(argv.slice(1)));
     return;
   }
+  if (argv[0] === 'native-requests') { const { nativeRequestsMain } = await import('./native-requests.js'); await nativeRequestsMain(argv.slice(1)); return; }
   if (argv[0] === 'mcp') { const { mcpMain } = await import('./mcp.js'); await mcpMain(argv.slice(1)); return; }
   if (argv[0] === 'hook') { const { hookMain } = await import('./hook.js'); await hookMain(argv.slice(1)); return; }
   if (argv[0] === 'agent') {
@@ -60,6 +65,16 @@ async function main(): Promise<void> {
     return;
   }
   requireHumanEnvironment();
+  if (argv[0] === 'maintenance') {
+    const { maintenanceCommand } = await import('./maintenance.js');
+    const output = await maintenanceCommand(defaultStateDirectory(), argv.length === 1 ? ['--help'] : argv.slice(1));
+    console.log(typeof output === 'string' ? output : JSON.stringify(output, null, 2)); return;
+  }
+  if (argv[0] === 'integrations') {
+    const { integrationsMain } = await import('./integrations.js');
+    const output = await integrationsMain(argv.length === 1 ? ['--help'] : argv.slice(1));
+    console.log(typeof output === 'string' ? output : JSON.stringify(output, null, 2)); return;
+  }
   if (argv[0] === 'group' || argv[0] === 'connect') {
     const module = argv[0] === 'group' ? await import('./group.js') : await import('./connect.js');
     const run = 'groupMain' in module ? module.groupMain : module.connectMain;
@@ -125,7 +140,7 @@ async function main(): Promise<void> {
     let daemon: unknown;
     try { daemon = { status: 'connected', ...await request(directory, 'GET', '/health') }; }
     catch (error) { daemon = { status: 'unavailable', reason: (error as Error).message }; }
-    output = { runtime: process.version, stateDirectory: directory, daemon, adapters: await adapterDiagnostics(), releaseGate: 'Groups, scoped MCP and external protocol are implemented. Claude 2.1.247 explicit plugin/resume connection is supported. Hot attachment, other native adapters and four-tool live verification remain incomplete.' };
+    output = { runtime: process.version, stateDirectory: directory, daemon, adapters: await adapterDiagnostics(), releaseGate: 'Groups, scoped MCP and external protocol are implemented. Claude 2.1.247 plugin/resume and Codex 0.154.0 reviewed-hook/resume connectors are implemented. Codex refreshes active chat context on ordinary prompts. Native configuration/trust remains explicit. Hot attachment, other native adapters and four-tool live verification remain incomplete.' };
   } else if (command === 'session register') {
     output = await post('/v1/sessions', { projectId: required('project'), tool: required('tool'), workspaceRoot: flags.get('root') ?? process.cwd(), nativeId: flags.get('native-id') ?? randomUUID(), instanceId: flags.get('instance') ?? randomUUID() });
   } else if (command === 'task create') {

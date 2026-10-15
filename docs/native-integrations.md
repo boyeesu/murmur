@@ -65,13 +65,32 @@ are never cleaned up as part of this configuration lifecycle.
 These controls are not an OS sandbox against other processes running as the same
 user. Native application policy and normal trust/approval prompts still apply.
 
+## Existing-chat connector — Codex 0.154.0
+
+Codex has a separate reviewed fixed-hook export through `murmur connect setup
+--tool codex --out NEW_DIRECTORY`. A human adds the generated UserPromptSubmit
+entry without replacing existing policy hooks, explicitly resumes the original
+conversation and reviews native hook trust. Ordinary `murmur-connect` messages
+request human-approved participation. After explicit activation, ordinary prompts
+refresh bounded advisory context from the existing grant without polling approval,
+creating unlinked helper state or renewing authority.
+
+The actual CLI and production export passed isolated native approval/resume,
+developer-input context delivery, fresh decision refresh, separate same-cwd owners,
+native fork/new-thread isolation and leave tests. This does not verify interactive
+hook trust, real model use, desktop/web attachment or hot loading. Codex identity
+is parent-conversation scope including subagents. See
+[Codex existing-chat setup and evidence](codex-existing-chat.md). The managed Codex
+automatic configuration gate remains separate and unchanged.
+
 ## Existing-chat connector — Claude 2.1.247 only
 
 The 0.5 connector is separate from managed MCP and advisory hooks. Its enabled path
 is an **explicitly loaded plugin plus native resume of the original conversation**,
 not a shared-chat MCP server, automatic discovery, or direct attachment to an already-open
-CLI. The 0.4 group/API/handoff behavior remains available independently. Codex,
-OpenCode, Cursor, and other Claude versions remain gated for existing-chat commands.
+CLI. The 0.4 group/API/handoff behavior remains available independently. Codex
+has the separate version-scoped flow above; OpenCode, Cursor, and untested Claude
+versions remain gated for existing-chat commands.
 
 The production hook receives bounded native `UserPromptSubmit` stdin with the raw
 `/murmur:connect` prompt, current UUID, and cwd. It parses a fixed command grammar,
@@ -90,7 +109,11 @@ The literal actions are `start GROUP TITLE | RESPONSIBILITY`,
 following `/murmur:connect`. Join accepts exactly 43 base64url characters. Start/join
 request human review; refresh activates approval and retrieves bounded advisory
 context. Status may also activate approved access. Leave removes only this connection,
-not the task or native process. No automatic background intent publication is provided.
+not the task or native process. Later ordinary prompts refresh only an already-active
+connection. Claude PreToolUse/PostToolUse context hooks are bounded advisory reads,
+with proof-bound deduplication; native post-tool context delivery is not verified.
+Unlinked, locally pending, left and expired chats remain inert. No automatic
+background intent publication or observed-write attribution is provided.
 
 ### Native evidence — 0.5 checkpoint, 2026-10-14
 

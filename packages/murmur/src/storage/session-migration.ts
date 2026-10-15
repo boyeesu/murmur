@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { assert } from '../protocol/index.js';
+import { validateMaintenanceSchema } from './maintenance-schema.js';
 
 function sessionSql(name: string, version: number): string {
   return `CREATE TABLE ${name} (
@@ -20,9 +21,10 @@ function validate(db: DatabaseSync, version: number): void {
 /** Foreign keys are disabled ONLY outside the rebuild transaction and restored on all exits. */
 export function migrateSessions(db: DatabaseSync): void {
   const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
-  assert(version >= 1 && version <= 3, 'Unsupported base schema version.', version > 3 ? 'SCHEMA_TOO_NEW' : 'INVALID_SCHEMA');
-  validate(db, version);
-  if (version === 3) return;
+  assert(version >= 1 && version <= 4, 'Unsupported base schema version; rollback is unsupported.', version > 4 ? 'SCHEMA_TOO_NEW' : 'INVALID_SCHEMA');
+  if (version === 4) validateMaintenanceSchema(db);
+  validate(db, Math.min(version, 3));
+  if (version >= 3) return;
   const indexes = db.prepare("SELECT name, sql FROM sqlite_schema WHERE type='index' AND tbl_name='sessions' AND sql IS NOT NULL ORDER BY name").all();
   const before = db.prepare('SELECT rowid, * FROM sessions ORDER BY rowid').all();
   const schemaBefore = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE tbl_name != 'sessions' ORDER BY type,name").all();

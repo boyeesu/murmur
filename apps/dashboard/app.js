@@ -17,7 +17,7 @@
     generation: 0, drawer: null, lastUpdated: null, expiryTimer: null,
     stream: null, streamTimer: null, pollTimer: null, refreshTimer: null,
     streamGeneration: 0, cursors: new Map(), reconnectAttempt: 0,
-    connectionPollTimer: null, enrollmentEditor: null,
+    connectionPollTimer: null, enrollmentEditor: null, administrationEditor: null,
   };
   const pages = {
     tasks: ['Tasks', 'Keep ownership clear. See what is ready to move.'],
@@ -27,6 +27,7 @@
     integration: ['Integration', 'Inspect and validate candidates before advancing the target.'],
     connections: ['Connections', 'Shared project focus. Separate chats, responsibilities, and task owners.'],
     adapters: ['Adapters', 'Configuration, connection, and verification are separate signals.'],
+    operations: ['Operations', 'Review installation changes and private-state maintenance before applying.'],
   };
   const endpoints = { decisions: '/v1/decisions', workspaces: '/v1/workspaces', integration: '/v1/integration/jobs', adapters: '/v1/adapters' };
   const authInstruction = 'Run npm run murmur -- dashboard and reopen the printed one-use URL.';
@@ -171,6 +172,7 @@
     state.token = null; state.generation++; clearTimeout(state.expiryTimer); stopStream();
     clearInterval(state.connectionPollTimer); state.connectionPollTimer = null;
     state.enrollmentEditor?.invalidate('Sign in again, then perform a fresh review before approving.');
+    state.administrationEditor?.invalidate('Sign in again and reopen this operation. No approval remains valid.');
     $('#project-select').disabled = true; $('#register-project').disabled = true; $('#refresh').disabled = true;
     $('#page-actions').replaceChildren(); $('#page-error').hidden = true;
     setConnection('Not connected');
@@ -202,6 +204,7 @@
   function clearData() { state.data = {}; state.loaded = false; state.search = ''; state.filter = ''; }
   async function selectProject(id) {
     stopStream(); state.generation++; state.projectId = id; clearData(); renderProjectSelect();
+    state.administrationEditor?.invalidate('The selected project changed. Reopen this operation before reviewing or applying.');
     renderPage();
     await refresh();
     if (state.token && state.projectId === id) startStream();
@@ -214,7 +217,7 @@
   async function refresh(quiet = false) {
     if (!state.token) return;
     if (state.refreshing) { state.queued = true; return; }
-    if (!state.projectId && state.page !== 'connections') { state.loaded = true; renderPage(); return; }
+    if (!state.projectId && !['connections', 'operations'].includes(state.page)) { state.loaded = true; renderPage(); return; }
     state.refreshing = true; $('#refresh').disabled = true;
     const generation = state.generation, page = state.page, projectId = state.projectId;
     if (!state.loaded && !quiet) $('#page-content').replaceChildren(loading());
@@ -223,9 +226,10 @@
       requests.push(['connectionRequests', '/v1/connections/requests']);
       if (projectId) requests.push(['groups', scoped('/v1/groups', {}, projectId)], ['grants', scoped('/v1/connections/grants', {}, projectId)]);
     }
+    if (page === 'operations') requests.push(['operations', installationQuery(project()?.root)]);
     if (endpoints[page]) requests.push([page, scoped(endpoints[page], {}, projectId)]);
     try {
-      const results = await Promise.allSettled(requests.map(([, path]) => page === 'connections' ? connectionAPI(path) : api(path)));
+      const results = await Promise.allSettled(requests.map(([, path]) => page === 'connections' ? connectionAPI(path) : page === 'operations' ? administrationAPI(path) : api(path)));
       if (generation !== state.generation || !state.token) return;
       const errors = [];
       results.forEach((result, index) => {
@@ -240,6 +244,7 @@
       }
       updateCounts();
       if (page === 'connections' && state.data.connectionRequests) state.enrollmentEditor?.observe(state.data.connectionRequests);
+      if (page === 'operations' && state.data.operations) state.administrationEditor?.observe?.(state.data.operations);
       if (page === state.page) renderContent();
     } finally {
       state.refreshing = false; $('#refresh').disabled = !state.token;
@@ -281,7 +286,7 @@
         let buffer = '', eventId = '', eventName = '', data = [];
         const dispatch = () => {
           if (eventId && /^\d+$/.test(eventId)) state.cursors.set(projectId, Number(eventId));
-          if (data.length && (eventName === 'update' || !eventName)) {
+          if (data.length && (eventName === 'update' || eventName === 'reset' || !eventName)) {
             try { const payload = JSON.parse(data.join('\n')); if (Number.isSafeInteger(payload.sequence)) state.cursors.set(projectId, payload.sequence); } catch { /* Event content is not rendered or trusted. */ }
             refreshSoon();
           }
@@ -316,7 +321,7 @@
     if (!pages[page]) return;
     state.page = page; state.search = ''; state.filter = '';
     document.body.classList.remove('nav-open'); $('#menu-toggle').setAttribute('aria-expanded', 'false'); $('#menu-toggle').setAttribute('aria-label', 'Open navigation');
-    renderPage(); syncConnectionPolling(); if (state.token && (state.projectId || page === 'connections')) void refresh();
+    renderPage(); syncConnectionPolling(); if (state.token && (state.projectId || ['connections', 'operations'].includes(page))) void refresh();
   }
   function renderPage() {
     const [title, description] = pages[state.page];
@@ -339,13 +344,13 @@
   function renderContent() {
     if (!state.token) return;
     const content = $('#page-content');
-    if (!state.projectId && state.page !== 'connections') {
+    if (!state.projectId && !['connections', 'operations'].includes(state.page)) {
       content.replaceChildren(empty('Register your first project', 'Choose a local repository to coordinate tasks, decisions, and integration across your agents.', [button('Register project', openRegisterProject, 'button-primary')], '▱'));
       return;
     }
     if (!state.loaded) { content.replaceChildren(loading()); return; }
     const dataKey = state.page === 'tasks' ? 'status' : state.page === 'connections' ? 'connectionRequests' : state.page;
-    if (!state.data[dataKey]) {
+    if (!state.data[dataKey] && state.page !== 'operations') {
       content.replaceChildren(empty('This view is not available yet', 'The daemon has not returned data for this view. Retry the request; no empty or successful result has been assumed.', [button('Retry', () => refresh())], '○'));
       return;
     }
@@ -357,7 +362,7 @@
     const details = Array.from(content.querySelectorAll('details'));
     const openDetails = details.map((item, index) => item.open ? index : -1).filter(index => index >= 0);
     const focusedSummary = active?.tagName === 'SUMMARY' ? details.findIndex(item => item.firstElementChild === active) : -1;
-    const renderers = { tasks: renderTasks, alerts: renderAlerts, decisions: renderDecisions, workspaces: renderWorkspaces, integration: renderIntegration, adapters: renderAdapters, connections: renderConnections };
+    const renderers = { tasks: renderTasks, alerts: renderAlerts, decisions: renderDecisions, workspaces: renderWorkspaces, integration: renderIntegration, adapters: renderAdapters, connections: renderConnections, operations: renderOperations };
     content.replaceChildren(renderers[state.page]());
     const newDetails = Array.from(content.querySelectorAll('details'));
     openDetails.forEach(index => { if (newDetails[index]) newDetails[index].open = true; });
@@ -472,6 +477,285 @@
       table(['Tool', 'Configured', 'Connected', 'Verified', 'Capabilities / notes'], rows.map(item => el('tr', {},
         td([el('strong', {}, titleCase(item.tool)), el('div', { class: 'cell-subtitle' }, titleCase(item.status))]), td(boolStatus(item.configured, 'Configured', 'Not configured')), td(boolStatus(item.connected, 'Connected', 'Not connected')), td(boolStatus(item.verified, 'Verified', 'Not verified')),
         td([el('div', { class: 'adapter-capabilities' }, Array.isArray(item.capabilities) ? item.capabilities.map(cap => el('span', { class: 'tag' }, pretty(cap))) : el('span', { class: 'small' }, pretty(item.capabilities))), item.note ? el('p', { class: 'cell-subtitle' }, item.note) : null, inspectDetails('Executables and diagnostics', { executables: item.executables, status: item.status, capabilities: item.capabilities, implementation: item.implementation })], 'path-cell'))), 'Adapter configuration, connection and verification diagnostics'));
+  }
+
+  // Administrative DTOs are projected field by field. Never render raw credentials,
+  // authorizer metadata, database rows, or unfiltered daemon error payloads.
+  function administrationError(error) {
+    const messages = {
+      SESSION_EXPIRED: 'The browser session expired. Reopen a fresh dashboard URL and review again.',
+      FORBIDDEN: 'This operation requires a signed-in local human browser session.',
+      INSTALLATION_STALE_PLAN: 'The plan expired or its files changed. Inspect and review a fresh plan before applying.',
+      INSTALLATION_REPLAY: 'This one-use plan was already consumed. Inspect the outcome; never replay apply.',
+      INSTALLATION_RECOVERY_REQUIRED: 'An interrupted installation needs explicit recovery. Inspect the pending transaction; do not retry apply.',
+      INSTALLATION_RECOVERY_CONFLICT: 'Recovery preserved changed content and remains pending. Inspect the files locally before a new recovery review.',
+      INSTALLATION_BUSY: 'An installation operation or interrupted lock exists. Wait for the active operation or inspect pending recovery.',
+      INSTALLATION_COLLISION: 'Existing or edited content conflicts with this operation. It was not approved for replacement; inspect it locally.',
+      INSTALLATION_PROVIDER_UNVERIFIED: 'No verified installation strategy is available for this provider.',
+      INSTALLATION_LIMIT: 'The installation history or plan reached its safety limit. Preserve it for local inspection.',
+      INSTALLATION_STATE: 'The installation state changed. Inspect it and choose an available action.',
+      INSTALLATION_PATH: 'The project or private installation path failed a safety check. Inspect ownership, permissions, and canonical paths locally.',
+      INSTALLATION_SCHEMA: 'Installation state could not be validated. Preserve it for local inspection.',
+      STALE_REVISION: 'The credential revision changed. Inspect the credential again before revoking.',
+      CREDENTIAL_MODE: 'Managed and external credentials use their own lifecycle, not manual credential revocation.',
+      CREDENTIAL_REVOKED: 'This manual credential is already revoked. Inspect its current status.',
+      STALE_RETENTION_PREVIEW: 'The retention preview is stale. Run a fresh preview and review the counts before applying.',
+      INSECURE_STATE: 'The path or private state failed a safety check. Use an owned private directory (0700), without symlinked parents.',
+      INVALID_SCHEMA: 'Private-state validation failed. Preserve the state for local inspection; no success is assumed.',
+      EEXIST: 'The destination already exists. Choose a new private backup filename; existing files are never overwritten.',
+    };
+    return new Error(messages[error?.code] || (error?.status === 401 ? messages.SESSION_EXPIRED : 'The operation could not be confirmed. Your draft is preserved. Inspect current state before a fresh review; nothing will be retried automatically.'));
+  }
+  async function administrationAPI(path, body) {
+    try { return await api(path, body === undefined ? {} : { method: 'POST', body }); }
+    catch (error) { throw administrationError(error); }
+  }
+  function installationQuery(root, provider) {
+    const query = new URLSearchParams();
+    if (root) query.set('projectRoot', root);
+    if (provider) query.set('provider', provider);
+    return `/v1/integrations?${query}`;
+  }
+  const installationCapabilities = {
+    claude: 'Bundle management only. Native settings are not configured automatically; explicit activation and native trust remain separate.',
+    codex: 'Additive project .codex/hooks.json installer. Only the owned UserPromptSubmit entry changes; other hooks, permissions, and comments are preserved. Verify native loading and trust with /hooks.',
+    opencode: 'Native OpenCode installation is blocked: no verified installer is available. Managed launch support is a separate capability.',
+    cursor: 'Native Cursor installation is blocked: no verified installer is available.',
+  };
+  const retentionClasses = [
+    ['unreviewed-drafts', 'Unreviewed expired drafts'], ['events', 'Event history'],
+    ['context-records', 'Context delivery records'], ['mutation-payloads', 'Mutation replay payloads'],
+  ];
+  function renderOperations() {
+    const inspection = state.data.operations;
+    const result = el('div', { class: 'connections-view operations-view' }, notice('Human-only controls. Installation, native loading, and chat connection are different states. No operation here starts a native process or silently grants access.'));
+    const installs = el('div');
+    if (!inspection) installs.append(notice('Installation inspection is unavailable. No empty or successful result is assumed. Refresh to inspect.', 'warning'));
+    if (!state.projectId) installs.append(notice('Select or register a project to manage its integrations. Retention and backups below apply to the whole local daemon.', 'warning'));
+    if (inspection?.pending) installs.append(notice('An interrupted transaction is pending in the shared installation registry. New plans are blocked until a human explicitly reviews recovery. Recovery aborts that transaction; it does not retry installation.', 'warning'), button('Review pending recovery', openInstallationRecovery, 'button-danger', { 'data-focus-key': 'installation-recovery' }));
+    if (inspection?.lock) installs.append(notice('An installer operation lock is present. New plans are paused. Use the human CLI integrations inspect to identify it; known interrupted operations use recover. Unreadable or orphan locks require explicit CLI repair after all installer processes are stopped. No lock is removed automatically.', 'warning'));
+    installs.append(table(['Provider / capability', 'Installation', 'Native configured', 'Native loaded', 'Action'], Object.entries(installationCapabilities).map(([provider, limitation]) => {
+      const descriptor = asArray(inspection?.providers).find(item => item.provider === provider);
+      const item = asArray(inspection?.installations).find(entry => entry.provider === provider && entry.projectRoot === project()?.root);
+      const enabled = ['claude', 'codex'].includes(provider) && descriptor?.enabled === true;
+      const available = enabled && !!project()?.root && !inspection?.pending && !inspection?.lock;
+      return el('tr', {}, td([el('strong', {}, titleCase(provider)), el('p', { class: 'cell-subtitle' }, limitation), descriptor?.limitation ? el('p', { class: 'cell-subtitle' }, descriptor.limitation) : null], 'primary-cell'),
+        td(item ? [badge(item.status), el('p', { class: 'cell-subtitle' }, `Bundle integrity: ${item.integrity}`)] : inspection ? 'Not installed' : 'Not inspected'),
+        td(!inspection ? 'Not inspected' : item?.nativeConfigured === true ? 'Yes · owned hook found' : 'No'), td(badge('unverified', 'Unverified')),
+        td(button(enabled ? `Manage ${titleCase(provider)}` : 'Unavailable', () => openInstallation(provider, item), 'button-small', { disabled: !available, title: !enabled ? limitation : !project()?.root ? 'Select a project first.' : inspection?.pending ? 'Review the pending recovery first.' : inspection?.lock ? 'Inspect the installer lock from the human CLI first.' : `Review ${provider} installation changes`, 'data-focus-key': `manage-${provider}` })));
+    }), 'Provider installation and native configuration states'));
+    installs.append(el('p', { class: 'small muted space-top' }, 'Native loaded is unverified even when a bundle or hook is installed. Use Connections to inspect approved grants and bridge contact; an installation is not a connected chat.'));
+    result.append(connectionSection('Integration lifecycle', project()?.root ? `Project scope: ${project().root}` : 'Project-scoped bundles and owned native hook entries.', installs));
+    const credentials = el('div', {}, notice('Manual credentials can be inspected and explicitly revoked. Revocation does not abandon tasks or delete files. Managed launch authority and external grants have separate lifecycles.'));
+    if (sessions().length) credentials.append(table(['Session', 'Credential mode', 'Action'], sessions().map(item => el('tr', {}, td([sessionName(item.id), el('p', { class: 'cell-subtitle mono' }, item.id)]), td(titleCase(item.credentialMode)), td(button('Inspect credential', () => openCredential(item.id), 'button-small', { 'data-focus-key': `credential-${item.id}` })))), 'Session credential metadata in the selected project'));
+    else credentials.append(el('p', { class: 'small muted' }, 'No sessions are listed in this project. Select a project with a registered session to inspect its credential.'));
+    credentials.append(el('div', { class: 'action-row space-top' }, button('Rotate credential · CLI only', () => {}, '', { disabled: true, title: 'The CLI must durably save a new private credential file before submitting its hash.' })), el('p', { class: 'small muted space-top-sm' }, 'Rotation stays CLI-only: a browser cannot guarantee a durable private file before the hash-only request. No secret is shown or downloaded here.'));
+    result.append(connectionSection('Session credentials', 'Inspect the credential revision, not the session heartbeat revision.', credentials));
+    result.append(connectionSection('Private-state maintenance', 'Daemon-wide, across all projects. The project selector does not limit these actions.', el('div', { class: 'stack' },
+      notice('Retention irreversibly prunes only explicitly selected metadata classes. Task/source data, workspaces, authority and provenance records, and idempotency tombstones are preserved. Nothing is selected or scheduled automatically.', 'warning'),
+      el('div', { class: 'action-row' }, button('Preview retention', openRetention, '', { 'data-focus-key': 'retention' }), button('Create private backup', openBackup, '', { 'data-focus-key': 'backup' }), button('Offline restore · CLI only', () => {}, '', { disabled: true, title: 'Stop the daemon and use the CLI offline restore workflow.' })),
+      el('p', { class: 'small muted' }, 'Backups contain private credentials and authority. Restore must remain offline and CLI-only; the dashboard cannot restore or overwrite a live database.'))));
+    return result;
+  }
+  function administrationList(title, items, emptyText) {
+    return el('section', {}, el('h3', {}, title), items.length ? el('ul', { class: 'scope-list' }, items.map(item => el('li', {}, item))) : el('p', { class: 'small muted space-top-sm' }, emptyText));
+  }
+  function installationApproval(plan) { return { planId: plan.planId, planHash: plan.planHash, generation: plan.generation }; }
+  function validInstallationApproval(plan) {
+    return plan && typeof plan.planId === 'string' && /^[a-f\d-]{36}$/.test(plan.planId) && /^[a-f\d]{64}$/.test(plan.planHash) && Number.isSafeInteger(plan.generation) && plan.generation >= 0;
+  }
+  function installationPlanDetails(plan) {
+    const box = el('div', { class: 'stack administration-review' },
+      metadata([['Action', titleCase(plan.action)], ['Provider', titleCase(plan.provider)], ['Project root', plan.projectRoot], ['Installation ID', plan.installationId], ['Plan ID', plan.planId], ['Plan SHA-256', el('code', {}, plan.planHash)], ['Generation', plan.generation], ['Expires', timestamp(plan.expiresAt)]]),
+      notice('Only these exact paths and hashes are approved. Uninstall does not revoke linked grants, abandon tasks, delete source files, or stop native processes.', 'warning'),
+      table(['Exact path / operation', 'Before SHA-256', 'After SHA-256'], asArray(plan.affectedPaths).map(item => el('tr', {}, td([el('code', {}, item.path), el('p', { class: 'cell-subtitle' }, item.operation)]), td(el('code', {}, item.beforeHash ?? (item.operation === 'ensure-private-directory' ? 'Directory only' : 'No prior file'))), td(el('code', {}, item.afterHash ?? (item.operation === 'ensure-private-directory' ? 'Directory only' : 'No resulting file'))))), 'Exact installation file changes and hashes'),
+      administrationList('Backup paths', asArray(plan.backupPaths), 'No backup paths reported.'),
+      administrationList('Preserved paths / content', asArray(plan.preservedPaths), 'No additional preserved paths reported. Unowned native content, comments, permissions, and trust choices remain untouched.'),
+      administrationList('Requested behavior', asArray(plan.requestedBehavior), 'No additional behavior reported.'));
+    if (asArray(plan.nativeConfigurationChanges).length) box.append(table(['Native configuration path', 'Keys', 'Owned change'], plan.nativeConfigurationChanges.map(item => el('tr', {}, td(item.path), td(asArray(item.keys).join(' → ')), td(item.operation))), 'Owned native configuration changes'));
+    else box.append(notice('No native configuration changes are included in this plan.'));
+    if (plan.activation) box.append(metadata([['Activation', plan.activation.kind], ['Working directory', plan.activation.cwd], ['Tested version', plan.activation.testedVersion], ['Native loading', 'Unverified']]), el('p', { class: 'small text-preserve' }, plan.activation.instructions));
+    box.append(administrationList('Linked grants · not revoked', asArray(plan.linkedGrants).map(grant => `${grant.grantId} · project ${grant.projectId} · session ${grant.sessionId} · ${grant.status}`), plan.grantDiscovery === 'available' ? 'No linked grants were reported at review time.' : 'Grant discovery is unavailable. Do not infer that no grants exist; inspect Connections separately.'));
+    if (plan.grantDiscovery !== 'available' && asArray(plan.linkedGrants).length) box.append(notice('Grant discovery is unavailable; this is not a complete grant inventory.', 'warning'));
+    return box;
+  }
+  // Reviewed forms stay outside the SSE-replaced page. Invalidate only approvals,
+  // never input nodes or drafts. Every failed write consumes the local review.
+  function administrationReview({ title, description, build, reviewLabel, review, renderReview, confirmation, submit, apply, success, canApply = () => true, observe, expiresAt = () => null }) {
+    let form, snapshot = null, inspecting = false, disposed = false, expiryTimer;
+    const scope = state.generation;
+    const reviewBox = el('div', { class: 'review-inspection', 'aria-live': 'polite' });
+    const reviewError = el('div', { class: 'notice notice-error form-error', role: 'alert' });
+    function inScope() { return !disposed && !!state.token && scope === state.generation; }
+    function sync() {
+      const save = form?.querySelector('button[type="submit"]');
+      if (save) save.disabled = !inScope() || inspecting || !snapshot || !canApply(snapshot) || !checked(form, 'confirmAdministration');
+    }
+    function invalidate(message = 'Perform a fresh review, inspect the exact changes, then explicitly confirm.') {
+      snapshot = null; clearTimeout(expiryTimer);
+      if (form) form.elements.namedItem('confirmAdministration').checked = false;
+      reviewBox.replaceChildren(notice(message, 'warning')); sync();
+    }
+    async function inspect() {
+      if (inspecting || $('#modal').dataset.busy === 'true') return;
+      if (!inScope()) { invalidate('The browser session or project changed. Close and reopen this operation.'); return; }
+      inspecting = true; invalidate(); reviewError.replaceChildren();
+      const dialog = $('#modal'), focused = document.activeElement;
+      const disabled = Array.from(form.elements).map(item => [item, item.disabled]);
+      dialog.dataset.busy = 'true'; form.setAttribute('aria-busy', 'true');
+      try {
+        const request = review(form);
+        form.querySelectorAll('input, textarea, select, button').forEach(item => { item.disabled = true; });
+        $('[data-close]', dialog).disabled = true;
+        const result = await request;
+        if (!inScope()) throw new Error('The browser session or project changed. Reopen this operation.');
+        const expiry = expiresAt(result);
+        if (expiry != null && (!Number.isFinite(expiry) || expiry <= Date.now())) throw new Error('This plan has expired. Review a fresh plan.');
+        const details = renderReview(result);
+        snapshot = result; reviewBox.replaceChildren(details);
+        if (expiry != null) expiryTimer = setTimeout(() => invalidate('This plan expired. Review a fresh plan before applying.'), Math.min(2147483647, expiry - Date.now()));
+      } catch (error) { invalidate('Review is unavailable. Your draft is intact; no write has been attempted.'); reviewError.replaceChildren(el('p', {}, error.message)); }
+      finally {
+        inspecting = false; dialog.dataset.busy = 'false'; form.removeAttribute('aria-busy');
+        disabled.forEach(([item, previous]) => { item.disabled = previous; });
+        $('[data-close]', dialog).disabled = false; sync(); focused?.focus({ preventScroll: true });
+      }
+    }
+    form = showForm({ title, description, wide: true, danger: true, preserveFocus: true, submit,
+      build: (body, draft) => { build?.(body, draft); body.append(button(reviewLabel, inspect, '', { 'data-administration-review': 'true' }), reviewError, reviewBox, checkbox('confirmAdministration', confirmation, true)); },
+      onSubmit: async draft => {
+        if (!inScope() || !snapshot || inspecting || !canApply(snapshot)) throw new Error('A fresh, eligible review is required before applying.');
+        if (!checked(draft, 'confirmAdministration')) throw new Error('Explicitly confirm the reviewed operation.');
+        if (expiresAt(snapshot) != null && expiresAt(snapshot) <= Date.now()) { invalidate('This plan expired. Review a fresh plan.'); throw new Error('This plan has expired.'); }
+        const reviewed = snapshot;
+        invalidate('This review has been used. Inspect the outcome before any new review. No automatic retry will occur.');
+        return apply(reviewed);
+      },
+      onSuccess: result => {
+        if (!inScope()) throw new Error('The browser session or project changed while the operation ran. Inspect its outcome after signing in; do not retry automatically.');
+        success(result); void refresh(true);
+      },
+    });
+    state.administrationEditor = { form, sync, invalidate, dispose() { disposed = true; clearTimeout(expiryTimer); }, observe(inspection) { if (!inspecting && snapshot && observe && observe(snapshot, inspection)) invalidate('Installation state changed since review. Your draft is intact; inspect a fresh plan.'); } };
+    for (const event of ['input', 'change']) form.addEventListener(event, event => { if (event.target.name === 'confirmAdministration') sync(); else invalidate('The inputs changed. Perform a fresh review of this draft.'); });
+    invalidate(); return form;
+  }
+  function openInstallation(provider, installation) {
+    const root = project()?.root;
+    const descriptor = asArray(state.data.operations?.providers).find(item => item.provider === provider);
+    if (!root || !['claude', 'codex'].includes(provider) || descriptor?.enabled !== true) throw new Error('Select a project and a verified available provider first.');
+    const installed = installation?.status === 'installed';
+    const choices = installed ? [['update', 'Update owned installation'], ['uninstall', 'Uninstall owned installation'], ['rollback', 'Roll back last installation change']] : [['install', 'Install'], ...(installation ? [['rollback', 'Roll back last installation change']] : [])];
+    return administrationReview({ title: `Manage ${titleCase(provider)}`, description: installationCapabilities[provider],
+      build: body => body.append(metadata([['Project root', root], ['Scope', 'Project only']]), field('Action', select('installationAction', choices, choices[0][0])), notice('Plans expire after 15 minutes and are one-use. Refreshing never applies a plan. Rollback availability is checked by the daemon; edited content is preserved.')),
+      reviewLabel: 'Create fresh plan',
+      review: async form => {
+        const action = value(form, 'installationAction');
+        if (!choices.some(([choice]) => choice === action)) throw new Error('Choose an available installation action.');
+        const inspection = await administrationAPI(installationQuery(root, provider));
+        if (inspection.pending) throw new Error('An interrupted installation needs explicit recovery first. Close this form and inspect pending recovery.');
+        if (inspection.lock) throw new Error('An installer operation lock is present. Close this form and inspect the lock from the human CLI.');
+        if (!asArray(inspection.providers).some(item => item.provider === provider && item.enabled === true)) throw new Error('This provider is no longer available.');
+        const plan = await administrationAPI('/v1/integrations/plan', { action, provider, projectRoot: root, ...(installation ? { installationId: installation.installationId } : {}) });
+        if (!validInstallationApproval(plan) || plan.provider !== provider || plan.projectRoot !== root || plan.action !== action || !Number.isFinite(plan.expiresAt) || !Array.isArray(plan.affectedPaths)) throw new Error('The daemon did not return a matching reviewable plan. No apply is available.');
+        return plan;
+      }, renderReview: installationPlanDetails, expiresAt: plan => plan.expiresAt,
+      observe: (plan, inspection) => inspection.generation !== plan.generation || !!inspection.pending || !!inspection.lock,
+      confirmation: 'I reviewed the exact project, paths, before/after hashes, backups, preserved content, and linked grants. Apply only this one-use plan; do not revoke grants or abandon tasks.',
+      submit: 'Apply reviewed plan', apply: plan => administrationAPI('/v1/integrations/apply', installationApproval(plan)), success: showInstallationResult,
+    });
+  }
+  function showInstallationResult(result) {
+    if (result?.applied !== true && result?.recovered !== true) throw new Error('The daemon did not confirm an installation outcome. Inspect current state before continuing.');
+    showInfo(result.recovered ? 'Pending transaction recovered' : 'Installation plan applied', result.recovered ? 'Recovery aborted the exact interrupted transaction. It did not retry installation.' : 'The owned installation change was recorded. Native loading and chat connection are not verified.', [
+      metadata([['Registry generation', result.generation], ['Installation', result.installation?.status || 'No active installation'], ['Bundle integrity', result.installation?.integrity || 'Not installed'], ['Native configured', result.installation?.nativeConfigured === true ? 'Yes · owned hook found' : 'No'], ['Native loaded', 'Unverified'], ['Linked grants', 'Not revoked']]),
+      administrationList('Preserved paths', asArray(result.preservedPaths), 'No additional preserved paths reported.'),
+      notice('Tasks, source files, workspaces, native trust, and running processes are not changed by uninstall or recovery. Inspect Connections separately for approved access and bridge contact.'),
+    ]);
+  }
+  function openInstallationRecovery() {
+    return administrationReview({ title: 'Recover interrupted installation', description: 'Shared registry scope, potentially another project. Recovery aborts only the exact pending transaction. It never retries apply or removes edited user content.',
+      reviewLabel: 'Inspect exact pending transaction', review: async () => {
+        const inspection = await administrationAPI(installationQuery());
+        if (!validInstallationApproval(inspection.pending)) throw new Error('No exact pending transaction was returned. Refresh the installation inspection.');
+        return { ...installationApproval(inspection.pending), stateDirectory: inspection.stateDirectory };
+      },
+      renderReview: pending => el('div', { class: 'stack administration-review' }, metadata([['Registry', pending.stateDirectory], ['Pending plan ID', pending.planId], ['Pending SHA-256', el('code', {}, pending.planHash)], ['Pending generation', pending.generation]]), notice('This aborts the identified pending filesystem transaction and restores eligible owned changes. Edited content is preserved; conflicts can leave recovery pending. Grants and tasks remain unchanged.', 'warning')),
+      observe: (pending, inspection) => !inspection.pending || JSON.stringify(installationApproval(inspection.pending)) !== JSON.stringify(installationApproval(pending)),
+      confirmation: 'I reviewed this exact pending plan ID, hash, and generation. Abort this transaction only; do not retry installation.',
+      submit: 'Recover exact pending transaction', apply: pending => administrationAPI('/v1/integrations/recover', installationApproval(pending)), success: showInstallationResult,
+    });
+  }
+  function openCredential(sessionId) {
+    return administrationReview({ title: 'Inspect session credential', description: 'Only public credential metadata is shown. Manual revocation invalidates access without abandoning the session’s task or deleting source files.',
+      build: body => body.append(metadata([['Session ID', sessionId]]), notice('Managed launch credentials and external grants cannot be revoked here. Credential rotation stays CLI-only so the private file is saved durably before its hash is submitted.')),
+      reviewLabel: 'Inspect current credential', review: async () => {
+        const status = await administrationAPI(`/v1/maintenance/credentials?${new URLSearchParams({ sessionId })}`);
+        if (status?.sessionId !== sessionId || !['manual', 'managed', 'external'].includes(status.mode) || status.mode === 'manual' && (!Number.isSafeInteger(status.revision) || status.revision < 1)) throw new Error('A valid credential status was not returned. Revocation remains unavailable.');
+        return status;
+      },
+      renderReview: status => el('div', { class: 'stack administration-review' }, metadata([['Session', status.sessionId], ['Project', status.projectId], ['Credential mode', titleCase(status.mode)], ['Credential revision', status.revision], ['Changed', timestamp(status.changedAt)], ['Revoked', status.revokedAt == null ? 'Not revoked' : timestamp(status.revokedAt)]]), status.mode !== 'manual' ? notice(status.mode === 'managed' ? 'Revocation disabled: this credential belongs to a managed launch. Use its launch lifecycle.' : 'Revocation disabled: this session uses an external grant. Review that grant in Connections.', 'warning') : status.revokedAt != null ? notice('Revocation disabled: this manual credential is already revoked.') : notice('Revocation removes this manual credential’s access. Replacing it requires the CLI rotation workflow.', 'warning')),
+      canApply: status => status.mode === 'manual' && status.revokedAt === null,
+      confirmation: 'Revoke this exact manual credential at the inspected credential revision. Preserve its tasks and source files.',
+      submit: 'Revoke reviewed credential', apply: status => administrationAPI('/v1/maintenance/credentials/revoke', { sessionId: status.sessionId, revision: status.revision }),
+      success: status => {
+        if (status?.sessionId !== sessionId || status.revokedAt == null) throw new Error('Revocation was not confirmed. Inspect the current credential before continuing.');
+        showInfo('Manual credential revoked', 'The old credential no longer grants access. Tasks, source files, and ownership remain unchanged.', [metadata([['Session', status.sessionId], ['Credential revision', status.revision], ['Revoked', timestamp(status.revokedAt)]]), notice('Use the CLI to rotate into a durably saved new private credential file. No replacement secret is generated in this browser.')]);
+      },
+    });
+  }
+  function retentionInput(form) {
+    const raw = requiredText(form, 'retentionBefore', 'Cutoff date and time'), before = new Date(raw).getTime();
+    if (!Number.isSafeInteger(before) || before <= 0 || before > Date.now()) throw new Error('Choose a valid cutoff date and time in the past.');
+    const classes = retentionClasses.filter(([key]) => checked(form, `retention-${key}`)).map(([key]) => key);
+    if (!classes.length) throw new Error('Select at least one metadata class. Nothing is selected by default.');
+    return { before, classes };
+  }
+  function retentionDetails(preview) {
+    const before = `${timestamp(preview.before)} · ${preview.before} epoch ms`;
+    return el('div', { class: 'stack administration-review' },
+      notice('Daemon-wide irreversible metadata prune, across all projects. Only the selected classes below are affected. Task/source data, workspaces, authority/provenance records, and idempotency tombstones are preserved.', 'warning'),
+      metadata([['Cutoff (exclusive)', before], ['Maintenance revision', preview.revision], ['Preview SHA-256', el('code', {}, preview.previewDigest)]]),
+      table(['Metadata class', 'Affected', 'Eligible records', 'Cutoff'], retentionClasses.map(([key, label]) => el('tr', {}, td(label), td(preview.classes.includes(key) ? 'Selected' : 'Not selected'), td(preview.counts[key], 'numeric'), td(preview.classes.includes(key) ? before : 'Preserved'))), 'Retention preview counts by explicit metadata class'),
+      table(['Project', 'Event cutoff sequence', 'Events'], asArray(preview.cutoffs?.events).map(item => el('tr', {}, td(item.projectId), td(item.throughSequence, 'numeric'), td(item.count, 'numeric'))), 'Event retention cutoffs by project'),
+      table(['Project', 'Context cutoff', 'Context records'], asArray(preview.cutoffs?.contexts).map(item => el('tr', {}, td(item.projectId), td(`${timestamp(item.before)} · ${item.before} epoch ms`), td(item.count, 'numeric'))), 'Context retention cutoffs by project'));
+  }
+  function openRetention() {
+    return administrationReview({ title: 'Preview metadata retention', description: 'Daemon-wide, not limited to the selected project. Choose an explicit cutoff and classes; preview first, then review irreversible pruning.',
+      build: body => body.append(field('Prune metadata strictly before', input('retentionBefore', '', { type: 'datetime-local', required: true }), 'Local date and time, converted to an exact epoch-millisecond cutoff. Future cutoffs are refused.'), el('fieldset', { class: 'administration-classes' }, el('legend', { class: 'field-label' }, 'Metadata classes · none selected by default'), retentionClasses.map(([key, label]) => checkbox(`retention-${key}`, label))), notice('Create a private backup before pruning if you need recoverability. No task/source deletion or scheduled retention is offered here.')),
+      reviewLabel: 'Run retention preview', review: async form => {
+        const input = retentionInput(form), preview = await administrationAPI('/v1/maintenance/retention/preview', input);
+        if (preview?.before !== input.before || !Array.isArray(preview.classes) || JSON.stringify(preview.classes) !== JSON.stringify(input.classes) || !Number.isSafeInteger(preview.revision) || !/^[a-f\d]{64}$/.test(preview.previewDigest) || !retentionClasses.every(([key]) => Number.isSafeInteger(preview.counts?.[key]) && preview.counts[key] >= 0)) throw new Error('A matching retention preview was not returned. Pruning is unavailable.');
+        return preview;
+      }, renderReview: retentionDetails,
+      confirmation: 'I reviewed the exact cutoff, selected classes, counts, and per-project cutoffs. Irreversibly prune only this reviewed metadata; preserve task/source data and idempotency tombstones.',
+      submit: 'Prune reviewed metadata', apply: preview => administrationAPI('/v1/maintenance/retention/apply', { before: preview.before, classes: preview.classes, previewDigest: preview.previewDigest, revision: preview.revision }),
+      success: result => {
+        if (result?.applied !== true) throw new Error('Pruning was not confirmed. Run a fresh preview before continuing.');
+        showInfo('Reviewed metadata pruned', 'Only the explicitly reviewed metadata classes were pruned. Task/source data and idempotency tombstones remain intact.', [metadata([['New maintenance revision', result.newRevision]]), retentionDetails(result)]);
+      },
+    });
+  }
+  function openBackup() {
+    const generation = state.generation;
+    const form = showForm({ title: 'Create a private backup', description: 'Daemon-wide SQLite backup. This file contains private credentials and authority; never publish it or attach it to support reports.', wide: true, preserveFocus: true, submit: 'Create new private backup',
+      build: body => body.append(notice('Choose a NEW absolute filename inside an existing owned, private parent directory (0700), without symlinked parents. The daemon creates a private file (0600); it never overwrites an existing file.', 'warning'), field('New absolute backup destination', input('backupDestination', '', { required: true, maxlength: '4096', autocomplete: 'off', spellcheck: 'false', placeholder: '/absolute/private-directory/murmur-backup.sqlite' }), 'This is a path on the daemon’s machine, not a browser download. Existing destinations are refused.'), checkbox('confirmBackup', 'I understand this backup contains private credentials. I chose a new filename in a private parent directory and will keep it private.', true), notice('Restore is CLI-only and requires the daemon to be stopped. If backup fails, inspect the destination locally before choosing a new path; no retry or overwrite occurs automatically.')),
+      onSubmit: async form => {
+        if (!state.token || generation !== state.generation) throw new Error('The browser session or project changed. Reopen this operation.');
+        if (!checked(form, 'confirmBackup')) throw new Error('Confirm that the new backup destination will remain private.');
+        const destination = requiredText(form, 'backupDestination', 'New backup destination');
+        if (!/^(\/|[A-Za-z]:[\\/])/.test(destination) || /[\u0000-\u001f\u007f]/.test(destination)) throw new Error('Use an absolute destination path without control characters.');
+        form.elements.namedItem('confirmBackup').checked = false;
+        return administrationAPI('/v1/maintenance/backup', { destination });
+      },
+      onSuccess: result => {
+        if (!state.token || generation !== state.generation) throw new Error('The browser session or project changed while backup ran. Inspect its destination after signing in; do not retry automatically.');
+        if (result?.sensitive !== true || typeof result.destination !== 'string') throw new Error('A private backup was not confirmed. Inspect the destination locally; do not overwrite or automatically retry.');
+        showInfo('Private backup created', 'Keep this file private. It contains credentials and authority, not just task history.', [metadata([['Destination', result.destination], ['Database pages', result.pages], ['Schema version', result.schemaVersion]]), notice('Existing files were not overwritten. Offline restore remains CLI-only and requires a stopped daemon.', 'warning')]);
+      },
+    });
+    for (const event of ['input', 'change']) form.addEventListener(event, event => { if (event.target.name === 'backupDestination') form.elements.namedItem('confirmBackup').checked = false; });
+    return form;
   }
 
   function publicRequestReference(value) {
@@ -1006,6 +1290,7 @@
     return el('header', { class: 'dialog-header' }, el('div', {}, el('h2', { id, tabindex: '-1' }, title), description ? el('p', {}, description) : null), button('×', () => dialog.close(), 'icon-button', { 'aria-label': 'Close dialog', 'data-close': 'true' }));
   }
   function openModal(title, description, wide = false) {
+    state.administrationEditor?.dispose(); state.administrationEditor = null;
     const dialog = $('#modal');
     dialog.classList.toggle('wide', wide); dialog.dataset.busy = 'false';
     $('#modal-content').replaceChildren(dialogHeader(title, description, dialog));
@@ -1041,7 +1326,7 @@
     if (!Number.isSafeInteger(item?.revision)) throw new Error('The daemon did not return a usable revision. Reload this record before changing it.');
     return item.revision;
   }
-  function showForm({ title, description, build, submit = 'Save changes', onSubmit, onSuccess, wide = false, danger = false }) {
+  function showForm({ title, description, build, submit = 'Save changes', onSubmit, onSuccess, wide = false, danger = false, preserveFocus = false }) {
     const { dialog, body } = openModal(title, description, wide);
     const form = el('form'); const fields = el('div');
     const errorBox = el('div', { class: 'notice notice-error form-error', role: 'alert' });
@@ -1052,6 +1337,7 @@
     form.addEventListener('submit', async event => {
       event.preventDefault(); if (dialog.dataset.busy === 'true' || !form.reportValidity()) return;
       errorBox.replaceChildren(); dialog.dataset.busy = 'true';
+      const focused = document.activeElement;
       const disabled = Array.from(form.elements).map(item => [item, item.disabled]);
       form.setAttribute('aria-busy', 'true'); save.textContent = 'Working…';
       // Read values in onSubmit before disabling controls; values remain available while busy.
@@ -1071,6 +1357,11 @@
         const close = $('[data-close]', dialog); if (close) close.disabled = false;
         save.textContent = submit;
         if (state.enrollmentEditor?.form === form) state.enrollmentEditor.sync();
+        if (state.administrationEditor?.form === form) state.administrationEditor.sync();
+        if (preserveFocus && dialog.open && $('form', dialog) === form) {
+          const next = focused && !focused.disabled ? focused : $('[data-administration-review]', form) || $('input, select, textarea', form);
+          next?.focus({ preventScroll: true });
+        }
       }
     });
     queueMicrotask(() => { const first = $('input:not([type="checkbox"]), select, textarea', form); (first || $('#modal-title')).focus(); });
@@ -1433,7 +1724,7 @@
   });
   $('#modal').addEventListener('cancel', event => { if ($('#modal').dataset.busy === 'true') event.preventDefault(); });
   $('#drawer').addEventListener('close', () => { state.drawer = null; });
-  $('#modal').addEventListener('close', () => { state.enrollmentEditor = null; });
+  $('#modal').addEventListener('close', () => { state.enrollmentEditor = null; state.administrationEditor?.dispose(); state.administrationEditor = null; });
   window.addEventListener('hashchange', () => {
     const params = new URLSearchParams(location.hash.slice(1));
     const reference = publicRequestReference(params.get('request'));

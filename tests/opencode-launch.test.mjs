@@ -191,7 +191,7 @@ test('launch schema v1 migration preserves populated rows, all credentials, jour
   const columns = store.db.prepare('PRAGMA table_info(murmur_launches)').all();
   const foreignKeys = store.db.prepare('PRAGMA foreign_key_list(murmur_launches)').all();
   const launches = migrate(store); t.after(() => launches.close());
-  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 4);
   assert.equal(store.db.prepare("SELECT version FROM murmur_launch_schema WHERE name='launches'").get().version, 2);
   assert.deepEqual(databaseSnapshot(store), before);
   assert.deepEqual(schemaSnapshot(store).filter(row => row.type === 'index'), indexes);
@@ -222,7 +222,7 @@ test('launch schema migration failure after rebuild rolls back schema, rows and 
   assert.equal(store.db.prepare("SELECT version FROM murmur_launch_schema WHERE name='launches'").get().version, 1);
   assert.deepEqual(databaseSnapshot(store), before);
   assert.deepEqual(schemaSnapshot(store), schema);
-  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 4);
   store.db.exec('DROP TRIGGER fixture_fail_version');
   const launches = migrate(store); t.after(() => launches.close());
   assert.deepEqual(databaseSnapshot(store), before);
@@ -258,7 +258,7 @@ test('launch schema v2 fresh databases reopen and reject newer versions before r
   const before = schemaSnapshot(reopened);
   assert.throws(() => migrate(reopened), { code: 'SCHEMA_TOO_NEW' });
   assert.deepEqual(schemaSnapshot(reopened), before);
-  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 4);
 });
 
 test('newer launch schema rejects populated state before restart recovery or credential changes', t => {

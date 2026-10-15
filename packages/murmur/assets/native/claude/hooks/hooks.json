@@ -10,6 +10,28 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__MURMUR_PRE_TOOL_COMMAND__",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__MURMUR_POST_TOOL_COMMAND__",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

@@ -311,12 +311,15 @@ test('credential-shaped fields and token echoes in successful responses are reda
   assert.match(result.message, /\[REDACTED\]/);
 });
 
-test('updates uses scoped context event metadata, never unrestricted events', async () => {
-  const { client, calls } = fixture();
+test('updates uses scoped context event metadata and retention gaps, never unrestricted events', async () => {
+  const history = { requestedAfter: 8, prunedThrough: 8, prunedCount: 8, prunedAt: 40, historyPruned: true,
+    contextRecords: { before: 39, prunedCount: 2, prunedAt: 40 } };
+  const { client, calls } = fixture((call, count) => response(count === 1 ? identity() : { ...context(), history }));
   const result = await client.updates(8);
   assert.equal(new URL(calls[1].url).pathname, '/v1/context');
   assert.equal(new URL(calls[1].url).searchParams.get('after'), '8');
   assert.deepEqual(result.events, context().events);
+  assert.deepEqual(result.history, history);
   assert.equal(result.meaning, 'generated_context_event_metadata_only');
   assert.equal(result.taskId, connection.taskId);
 });

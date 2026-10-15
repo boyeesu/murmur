@@ -6,6 +6,76 @@ The sections below record dated local checkpoints; older failures and test total
 are retained as history, not current capability claims. For current remote runtime
 results, see [GitHub Actions](https://github.com/boyeesu/murmur/actions/workflows/ci.yml).
 
+## Current 0.6 development verification — 2026-10-15
+
+This records local evidence, not a published release or completion of the four-tool
+workflow. The final integrated run used an unchanged source snapshot.
+
+| Check | Result |
+| --- | --- |
+| Strict TypeScript checking and build | Passed |
+| Complete runtime suite | 590 passed, 0 failed, 0 skipped |
+| Installer review regressions | 39 passed, including real abrupt-exit lock cases and injected cross-filesystem boundaries |
+| Dashboard source/DOM suites | 38 passed |
+| Exact archive checks in runtime tests | Offline installation, runtime dependency closure, licenses, CLI, native assets and packaged documentation passed |
+| Browser console and server errors during Operations flows | None observed |
+| Desktop / mobile layout | Verified at 1280 and 375 CSS pixels; no document-wide horizontal overflow |
+
+The Operations browser trial used a marked synthetic project and private disposable
+state, not a real native chat or user project. It exercised:
+
+- A private SQLite backup through the UI and HTTP route, with regular-file, owner
+  and owner-only permission checks on the resulting file.
+- Explicit retention preview and confirmation for event history only. The reviewed
+  records were pruned while other classes remained unselected; the UI reported the
+  new maintenance revision.
+- Exact Codex installation review and apply. One owned hook group was written; the
+  UI distinguished installed/configured from unverified native loading. No native
+  process was launched or trust approval bypassed.
+- An intentionally interrupted fixture update. New-plan controls became disabled;
+  fresh review and the exact recovery action cleared the pending transaction without
+  retrying installation. The previous installation remained unchanged.
+- Manual credential inspection and revocation using its independent credential
+  revision. No replacement credential was generated in the browser.
+- Normal browser-session expiry and a new one-use login, without extending the
+  production authentication lifetime. The expired event stream was aborted as expected.
+- Mobile navigation and scrollable tables. Original uncommitted fixture content and
+  its Git HEAD were byte/hash-identical after installation and recovery.
+
+Screenshots and exact distributable checksums are retained with the local artifacts.
+Every distributable must additionally pass the exact-byte offline smoke check in
+`scripts/verify-package.mjs`; do not substitute an older archive or a newly repacked
+archive for the one whose checksum was verified.
+
+### Review fixes and remaining gates
+
+Focused review found and fixed installer recovery that could restore a human-deleted
+configuration, stale unchanged dependencies, unsafe changed runtime permissions,
+torn operation locks, cross-filesystem staging and BOM round trips. Restore now
+permanently retires workflow replay, including after normal initialization, and
+permits eligible fresh human-approved reconnect without reviving copied authority.
+Native dedupe commits only after successful output acknowledgement, not timed-out
+preparation; the actorless formatter rejects malformed streaming UTF-8.
+
+The local supply-chain report is limited. Current advisories and upstream checks were
+not reachable. Node 24/Linux CI and Docker-based validation were unavailable. No
+GitHub prerelease, npm publication, automatic merge or successful real-model workflow
+is claimed. The release workflow remains disabled pending verified action pins and
+protected human approval. See the [release checklist](release-checklist.md).
+
+Claude successful post-tool publication and tool-context consumption remain
+unverified after normal native permission denials. Codex's historical fixture used
+hook-trust bypass and pretrusted its project; normal interactive activation remains
+unverified, and the current probe no longer preseeds or bypasses trust. OpenCode
+committed rewind does not expose a sufficient incarnation proof; Cursor is absent
+from the verified runtime set. Additional versions, hot attachment and unfamiliar-user
+onboarding remain separate gates.
+
+An early non-standalone OpenCode probe hung. Its owned CLI was stopped and fixture
+removed, but process listing was denied, so the absence of a background service was
+not established. Later standalone probes used owned lifetimes and cleaned their
+fixtures. No guessed-PID or broad process cleanup was performed.
+
 ## Claude connector — 0.5 checkpoint (2026-10-14)
 
 Actual **Claude Code 2.1.247** passed the explicit native lifecycle experiment and

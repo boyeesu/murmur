@@ -3,27 +3,40 @@ export const TOOLS = ['claude', 'codex', 'cursor', 'opencode', 'manual'] as cons
 export type Tool = typeof TOOLS[number];
 export type Resource = { kind: 'path' | 'resource'; value: string };
 export type ExternalPrincipal = Readonly<{ kind: 'external'; grantId: string; projectId: string; sessionId: string; taskId: string; memberId: string; groupId: string; workspaceRoot: string; expiresAt: number }>;
-export type Principal = { kind: 'human' } | { kind: 'session'; sessionId: string; projectId: string } | ExternalPrincipal;
+export type SessionPrincipal = Readonly<{ kind: 'session'; sessionId: string; projectId: string; authenticated?: true }>;
+export type Principal = { kind: 'human' } | SessionPrincipal | ExternalPrincipal;
 /** Authority is attached by server code, never deserialized from JSON or persisted. */
 declare const authorizationBrand: unique symbol;
 export type MutationAuthorization = { readonly [authorizationBrand]: true };
 export type Mutation = { key: string; caller: string; operation: string; input: unknown; authorization?: MutationAuthorization };
 const principalGuards = new WeakMap<object, () => void>();
-const mutationGuards = new WeakMap<object, { caller: string; check: () => void; principal: ExternalPrincipal }>();
+const mutationGuards = new WeakMap<object, { caller: string; check: () => void; principal: SessionPrincipal | ExternalPrincipal }>();
 export function authenticatedExternalPrincipal(binding: ExternalPrincipal, check: () => void): ExternalPrincipal {
   const principal = Object.freeze({ ...binding });
   principalGuards.set(principal, check);
   return principal;
 }
-export function authorizeExternal(principal: Principal): void {
-  if (principal.kind !== 'external') return;
+/** Authenticated network sessions retain their exact credential guard across
+ * awaits and replay. The enumerable marker survives copies, but the WeakMap
+ * authority does not; serializing/spreading a principal cannot preserve access.
+ * Plain session principals remain a trusted in-process compatibility surface.
+ */
+export function authenticatedSessionPrincipal(binding: Omit<SessionPrincipal, 'authenticated'>, check: () => void): SessionPrincipal {
+  const principal = Object.freeze({ ...binding, authenticated: true as const });
+  principalGuards.set(principal, check);
+  return principal;
+}
+export function authorizePrincipal(principal: Principal): void {
+  if (principal.kind === 'human' || principal.kind === 'session' && principal.authenticated !== true) return;
   const check = principalGuards.get(principal);
-  assert(check, 'External authority must come from authenticated server capability.', 'EXTERNAL_UNAUTHORIZED', 401);
+  assert(check, 'Scoped authority must come from an authenticated server capability.', principal.kind === 'external' ? 'EXTERNAL_UNAUTHORIZED' : 'SESSION_UNAUTHORIZED', 401);
   check();
 }
+/** Compatibility alias; both authenticated scoped principal kinds are checked. */
+export function authorizeExternal(principal: Principal): void { authorizePrincipal(principal); }
 export function withAuthorization(principal: Principal, mutation: Mutation): Mutation {
-  if (principal.kind !== 'external') return mutation;
-  authorizeExternal(principal);
+  if (principal.kind === 'human' || principal.kind === 'session' && principal.authenticated !== true) return mutation;
+  authorizePrincipal(principal);
   assert(mutation.caller === callerId(principal), 'Mutation caller does not match external authority.', 'EXTERNAL_FORBIDDEN', 403);
   const authorization = Object.freeze({}) as MutationAuthorization;
   mutationGuards.set(authorization, { caller: mutation.caller, check: principalGuards.get(principal)!, principal });
@@ -39,7 +52,8 @@ export function authorizeMutation(mutation: Mutation): void {
 
 export function externalMutationPrincipal(mutation: Mutation): ExternalPrincipal | undefined {
   authorizeMutation(mutation);
-  return mutation.authorization ? mutationGuards.get(mutation.authorization)?.principal : undefined;
+  const principal = mutation.authorization ? mutationGuards.get(mutation.authorization)?.principal : undefined;
+  return principal?.kind === 'external' ? principal : undefined;
 }
 
 export class MurmurError extends Error {

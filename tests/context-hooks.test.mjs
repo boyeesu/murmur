@@ -497,3 +497,16 @@ test('group membership fingerprints invalidate unchanged clipped context without
   assert.match(contextText(invalid), /unavailable/i);
   assert(!invalid.text.includes('not-a-valid-fingerprint'));
 });
+
+
+test('retained-history gaps cannot be omitted as unchanged tool context', async t => {
+  const f = await fixture(t);
+  await f.invoke();
+  for (const event of ['PreToolUse', 'PostToolUse', 'UserPromptSubmit']) {
+    const result = await f.invoke({ event, context: after => core({ nextCursor: after,
+      history: { requestedAfter: after, historyPruned: true, prunedThrough: after + 5 } }) });
+    assert.match(result.text, /Event history was pruned through sequence/);
+    assert.match(result.text, /missing events cannot be replayed/);
+    assert(!result.text.includes('context unavailable'));
+  }
+});

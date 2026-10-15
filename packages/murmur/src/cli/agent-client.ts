@@ -120,6 +120,7 @@ export class AgentClient {
     const context = object(await this.context(after));
     return { projectId: this.#connection.projectId, taskId: this.#connection.taskId, events: context.events,
       nextCursor: context.nextCursor, truncated: object(context.truncated).events, delivery: context.delivery,
+      ...(context.history === undefined ? {} : { history: context.history }),
       meaning: 'generated_context_event_metadata_only' };
   }
 

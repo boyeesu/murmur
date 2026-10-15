@@ -13,7 +13,8 @@ and workspace.
 | Existing managed session | Group requests use its existing managed identity and assigned task. Human approval adds grouping; it does not create an external credential or extend its managed lifetime. |
 | External scoped API client | An approved grant authorizes one exact session/task/membership/workspace. The environment-scoped client does not discover human credentials or choose another chat's identity. |
 | Claude Code 2.1.247 same-chat connector | Enabled through an explicitly loaded plugin and native resume of the original conversation. Fixed-hook start/join, human approval, refresh, status, and leave are verified with headless native fixtures. |
-| Direct hot attachment or other native hosts | Unverified/gated. Existing-open reload, other Claude versions, Codex, OpenCode, and Cursor do not inherit Claude 2.1.247's support. |
+| Codex CLI 0.154.0 same-chat connector | Reviewed fixed-hook installation and native resume, human-approved participation, and automatic context refresh after explicit activation. Actual native static-response fixtures verify resumed context, fork isolation and separate ownership. |
+| Direct hot attachment or other native hosts | Unverified/gated. Existing-open reload, desktop/web attachment, untested Claude/Codex versions, OpenCode, and Cursor do not inherit the verified CLI flows. |
 | Unsupported native host fallback | Use a manual group or reviewed handoff for a separately launched **new** managed task. The original chat is not attached, moved, or stopped. |
 
 **0.5 checkpoint, 2026-10-14:** actual Claude 2.1.247 and the exported production
@@ -24,6 +25,23 @@ subset and denied nested OS-sandbox preflight remain recorded in
 [the native verification history](verification-existing-chats.md); later explicit
 lifecycle runs do not establish stronger OS isolation or absence of Keychain access.
 There is no universal `/murmur` or `@murmur` alias, or shared-chat MCP attachment.
+
+## Connect an existing Codex conversation
+
+Use `murmur connect setup --tool codex --out /absolute/new/export` from a human
+terminal, follow the reviewed additive hook-installation instructions, then
+explicitly resume the original conversation and trust the native hook. Enter
+`murmur-connect start GROUP TITLE | RESPONSIBILITY` or
+`murmur-connect join INVITE_CODE | RESPONSIBILITY` as an ordinary chat message.
+After human approval, `murmur-connect refresh` activates the grant. Ordinary
+prompts then retrieve fresh scoped context without manual refresh or publication.
+`status`, `leave`, and `help` are also supported. Leaving after approval works even
+before the first refresh and does not delete the task or native history.
+
+This is Codex CLI **0.154.0 parent-conversation scope**, including its subagents,
+not independent subagent identity or a claim of direct live-process attachment.
+See [the complete Codex guide and native evidence](codex-existing-chat.md) for
+setup, trust, automatic refresh, tested lifecycle behavior and remaining limits.
 
 ## Connect an existing Claude conversation
 
@@ -149,9 +167,12 @@ After approval, return to the original conversation:
 Refresh activates the approved connection and retrieves bounded advisory group/task
 context. `status` can also activate a newly approved pending request while checking
 state, but use `refresh` when you want the context. The fixed native hook performs the
-action; the skill only reports its result. Normal prompts do not automatically publish
-intent, fetch context, or update coordination. Refresh again explicitly when relevant
-work/decisions change; context delivery is **not model-obedience evidence**.
+action; the skill only reports its result. Later ordinary prompts automatically refresh
+only an already-active connection, without enrollment, approval polling or renewal.
+Claude tool-boundary hooks also provide bounded advisory context; native post-tool
+context delivery remains unverified. They do not publish intent, attribute writes,
+change permissions, rewrite calls, or complete work. Explicit refresh remains
+available. Context delivery is **not model-obedience evidence**.
 
 ### Commands and lifecycle
 
